@@ -1,0 +1,19 @@
+{
+  "name": "SIAK Presensi - SMPN 2 Kota Bangun",
+  "short_name": "SIAK Presensi",
+  "description": "Sistem Informasi & Presensi Digital Sekolah Anti-Cheat GPS & QR Code",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#2563eb",
+  "orientation": "portrait",
+  "lang": "id",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
