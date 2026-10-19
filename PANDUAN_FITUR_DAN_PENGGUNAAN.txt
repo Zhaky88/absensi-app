@@ -1,0 +1,303 @@
+================================================================================
+          PANDUAN LENGKAP FITUR DAN CARA PENGGUNAAN APLIKASI PRESENSI SIAK
+================================================================================
+Aplikasi: Sistem Informasi Absensi & Gamifikasi Kedisiplinan Siswa (SIAK)
+Arsitektur: React + Tailwind CSS + Supabase Database + Html5-Qrcode + Leaflet GPS
+Versi Dokumen: Oktober 2026
+
+--------------------------------------------------------------------------------
+DAFTAR ISI
+--------------------------------------------------------------------------------
+1. FITUR RADAR PRESTASI & KLASEMEN KEDISIPLINAN SISWA
+2. FITUR MODAL PRESTASI & REKOMENDASI CATATAN RAPOR SIKAP
+3. FITUR PRESENSI MANUAL GURU DENGAN KOLOM KETERANGAN
+4. FITUR KAMERA PEMINDAI QR / BARCODE (CAMERA QR SCANNER)
+5. FITUR GAMIFIKASI & LEADERBOARD PORTAL SISWA
+6. FITUR TABEL MOBILE RAMAH SENTUHAN (RESPONSIVE HORIZONTAL SCROLL)
+7. FITUR SINKRONISASI REAL-TIME & VALIDASI GEOFENCE GPS
+8. PANDUAN RINGKAS PENGGUNAAN HARIAN (WORKFLOW GURU, SISWA, & ADMIN)
+
+================================================================================
+1. FITUR RADAR PRESTASI & KLASEMEN KEDISIPLINAN SISWA
+================================================================================
+Deskripsi:
+Fitur ini dirancang bagi Guru dan Wali Kelas untuk memantau rekor kedisiplinan 
+kehadiran siswa secara visual, adil, dan objektif tanpa alpa/bolos.
+
+Fitur & Komponen Utama:
+a. Filter Periode Waktu:
+   - "Pekan Ini": Menghitung streak kehadiran minggu berjalan (maks. 5 hari kerja).
+   - "Bulan Ini": Menghitung streak kehadiran aktif bulan berjalan.
+   - "Semester": Menghitung akumulasi rekor streak tertinggi sepanjang semester.
+b. Filter Tingkat Kelas:
+   - Pilihan: Semua, Kelas 7, Kelas 8, dan Kelas 9.
+c. Filter Kelas Sekolah:
+   - Dropdown pilihan kelas (misal: VII-A, VII-B, VIII-A, IX-A).
+   - Didukung pencocokan fleksibel (ID kelas, relasi nested, dan nama kelas).
+d. Pencarian Siswa Instan:
+   - Kolom pencarian untuk mengetik Nama Siswa atau NIS secara langsung.
+e. Tombol "Reset Filter":
+   - Muncul otomatis saat filter aktif untuk mengembalikan tampilan ke default.
+f. Peringkat & Medali Juara:
+   - Peringkat 1: Lencana Emas (Medali Juara 1)
+   - Peringkat 2: Lencana Perak (Medali Juara 2)
+   - Peringkat 3: Lencana Perunggu (Medali Juara 3)
+   - Indikator "= Seri" (Juara Bersama): Diberikan secara adil jika siswa memiliki
+     angka streak yang sama persis tanpa manipulasi urutan.
+g. Level & XP Siswa:
+   - Menampilkan total akumulasi XP dan Level kedisiplinan siswa saat ini.
+
+Cara Menggunakan Fitur Ini:
+1. Masuk ke Dashboard Guru -> Klik tab menu "Radar Prestasi & Badges Siswa".
+2. Pilih Periode Waktu yang ingin dilihat di bagian kanan atas (Pekan Ini, Bulan Ini,
+   atau Semester).
+3. Gunakan filter Tingkat (7, 8, 9) atau pilih Kelas spesifik dari dropdown.
+4. Anda dapat mengetik nama siswa di kolom pencarian untuk mengecek posisinya.
+5. Tabel otomatis memperbarui urutan siswa dari yang paling disiplin.
+6. Klik tombol "Lihat Prestasi & Catatan Rapor" pada siswa yang diinginkan untuk 
+   membuka detail badges dan rekomendasi narasi rapor sikap.
+
+================================================================================
+2. FITUR MODAL PRESTASI & REKOMENDASI CATATAN RAPOR SIKAP
+================================================================================
+Deskripsi:
+Jendela modal showcase yang merinci seluruh lencana penghargaan siswa serta 
+menghasilkan narasi evaluasi sikap siap salin untuk dimasukkan ke rapor Kurikulum
+Merdeka / K13 oleh Wali Kelas.
+
+Fitur & Komponen Utama:
+a. Hero Profil Siswa:
+   - Menampilkan Level siswa, Total XP, Kelas, NIS, dan Rekor Streak terkini.
+   - Progress Bar Level: Menunjukkan sisa XP menuju level selanjutnya.
+b. Generator Narasi Rapor Nilai Sikap:
+   - Sistem secara cerdas menyusun kalimat apresiatif berbasis rekor kehadiran.
+   - Contoh: "Ananda Budi Pratama menunjukkan karakter kedisiplinan dan dedikasi 
+     luar biasa (Level 4 • 750 XP Prestasi). Memiliki konsistensi kehadiran 15 
+     hari berturut-turut tanpa pernah alpa..."
+   - Tombol "Salin Catatan": Menyalin teks narasi ke clipboard dengan feedback visual.
+c. Filter Kategori Lencana (Tier Badges):
+   - Semua: Menampilkan seluruh koleksi lencana sekolah.
+   - Terbuka: Menampilkan lencana yang telah berhasil diraih.
+   - Terkunci: Menampilkan lencana misi yang belum tuntas.
+   - Diamond, Gold, Silver, Bronze: Memfilter lencana berdasarkan tingkat kesulitan.
+   - Angka counter dinamis pada setiap tombol filter.
+   - Tombol "Reset Filter" dan Tampilan Kosong (Empty State) yang informatif.
+
+Cara Menggunakan Fitur Ini:
+1. Dari halaman Radar Prestasi atau Manajemen Kelas, klik "Lihat Prestasi & Catatan Rapor".
+2. Di bagian atas, baca narasi nilai sikap yang otomatis di-generate.
+3. Klik tombol "Salin Catatan", lalu paste (Ctrl+V) langsung ke form rapor wali kelas.
+4. Klik tab filter tier (misal: "Terbuka" atau "Gold") untuk melihat progres misi siswa.
+5. Pada lencana yang terkunci, perhatikan bar progres (misal: "12/20 Hari").
+6. Klik "Tutup" untuk kembali ke dashboard.
+
+================================================================================
+3. FITUR PRESENSI MANUAL GURU DENGAN KOLOM KETERANGAN
+================================================================================
+Deskripsi:
+Fitur bagi guru piket, wali kelas, atau guru pengajar untuk mencatat kehadiran 
+siswa secara tatap muka di kelas dengan pencatatan alasan/keterangan yang tersimpan
+langsung ke database Supabase.
+
+Fitur & Komponen Utama:
+a. Pemilihan Sesi KBM & Kelas:
+   - Guru memilih kelas dan mata pelajaran yang sedang diampu.
+b. Tombol Status Kehadiran Berkode Warna Standar Nasional:
+   - [H] Hijau (Emerald): Hadir
+   - [S] Biru (Blue): Sakit
+   - [I] Biru Langit (Sky): Izin
+   - [A] Merah (Rose): Alpa (Tanpa Keterangan)
+   *Catatan Kebijakan: Status "Terlambat" ditiadakan karena absensi dilakukan 
+   serentak di dalam kelas saat guru memulai jam pelajaran.
+c. Kolom Input Keterangan Absensi per Siswa:
+   - Kolom teks interaktif pada tiap baris siswa.
+   - Berguna untuk menulis catatan khusus, contoh: "Dispensasi Lomba OSN", 
+     "Flu batuk ada surat dokter", "Izin keluarga ke luar kota".
+d. Tombol Simpan Presensi Manual:
+   - Tombol "Simpan Seluruh Presensi ke Database" dengan efek loading dan 
+     notifikasi sukses.
+   - Data otomatis tersimpan permanen ke tabel `absensi` Supabase.
+e. Mode Toggle Pembatalan:
+   - Jika guru salah menekan tombol (misal menekan [H] padahal siswa [I]), guru 
+     dapat langsung menekan tombol [I], atau menekan ulang tombol yang sama untuk 
+     mereset ke status "Belum Presensi".
+
+Cara Menggunakan Fitur Ini:
+1. Buka Dashboard Guru -> Pilih tab menu "Presensi Manual".
+2. Pilih Kelas yang ingin diabsen dari dropdown kelas.
+3. Pada baris masing-masing siswa, klik tombol status:
+   - Klik [H] jika siswa duduk di kelas.
+   - Klik [S] jika siswa mengirim kabar sakit.
+   - Klik [I] jika siswa izin.
+   - Klik [A] jika siswa tidak hadir tanpa kabar.
+4. Jika ada siswa yang Sakit atau Izin, ketik alasan pada kolom "Keterangan" di 
+   samping tombol status.
+5. Klik tombol "Simpan Seluruh Presensi ke Database" di bagian bawah/atas tabel.
+6. Notifikasi hijau akan muncul dan data langsung tersinkron ke portal orang tua & admin.
+
+================================================================================
+4. FITUR KAMERA PEMINDAI QR / BARCODE (CAMERA QR SCANNER)
+================================================================================
+Deskripsi:
+Modul pemindai kamera terpadu berkecepatan tinggi yang mendukung kamera ponsel
+(Android/iOS) dan webcam laptop/PC untuk presensi mandiri murid maupun scan oleh guru.
+
+Fitur & Komponen Utama:
+a. Deteksi Keamanan Protokol Browser (HTTPS Guard):
+   - Mencegah error kamera pada browser modern dengan memverifikasi bahwa aplikasi
+     berjalan di protokol aman HTTPS atau Localhost.
+b. Smart Fallback Lensa Belakang Ponsel (`facingMode: 'environment'`):
+   - Otomatis memprioritaskan kamera belakang smartphone agar pengguna tidak 
+     bingung mencari lensa.
+c. Kontrol Lensa & Pergantian Kamera (Switch Camera):
+   - Tombol "Ganti Kamera" memungkinkan pengguna membalik lensa (Depan <-> Belakang)
+     atau berpindah antar multi-lensa ponsel.
+d. Tombol Power Kamera (Nyalakan / Matikan Sensor):
+   - Pengguna dapat mematikan sensor kamera kapan saja untuk menghemat daya baterai,
+     mencegah perangkat panas, dan menjaga privasi.
+e. Kontrol Senter / Flashlight (Torch):
+   - Tombol senter untuk menerangi QR Code fisik jika ruangan kelas temaram.
+f. Animasi Laser Pemindai & Viewfinder Responsif:
+   - Garis pemindai cyan dinamis yang memberi panduan batas bidang baca QR.
+g. Audio Chime & Haptic Feedback:
+   - Bunyi nada harmonis instan dan getaran lembut pada ponsel saat QR terbaca.
+h. Cooldown Anti-Spam:
+   - Jeda 1,5 detik setelah scan berhasil untuk mencegah scan ganda tidak sengaja.
+i. Pembersihan Resource (Safe Teardown):
+   - Sensor dan lampu kamera dijamin mati total saat modal/halaman ditutup.
+
+Cara Menggunakan Fitur Ini:
+- Dari Sisi Siswa (Presensi Mandiri):
+  1. Buka Portal Siswa -> Pilih tab "Scan QR Presensi".
+  2. Pastikan GPS berada di lingkungan sekolah (jika radius aktif).
+  3. Klik tombol "Buka Kamera Scan QR".
+  4. Berikan izin saat browser meminta "Izinkan Akses Kamera (Allow)".
+  5. Arahkan kamera ke layar proyektor guru yang menampilkan QR dinamis.
+  6. Suara bel berbunyi, confetti muncul di layar, dan kehadiran tercatat.
+  7. Klik "Tutup Kamera" setelah selesai.
+
+- Dari Sisi Guru (Scan ID Card Fisik Siswa):
+  1. Buka Portal Guru -> Pilih tab "Scan QR Siswa".
+  2. Kamera akan otomatis menyala dan siap membaca.
+  3. Mintalah siswa menunjukkan kartu pelajar (ID Card).
+  4. Arahkan kamera ke barcode/QR ID Card siswa.
+  5. Layar langsung memunculkan profil siswa (foto, nama, NIS).
+  6. Guru dapat mengonfirmasi kehadiran dengan tombol cepat H, S, I, A.
+
+================================================================================
+5. FITUR GAMIFIKASI & LEADERBOARD PORTAL SISWA
+================================================================================
+Deskripsi:
+Sistem gamifikasi edukatif untuk meningkatkan motivasi dan kebanggaan siswa dalam
+mempertahankan kehadiran sekolah tanpa pernah alpa.
+
+Fitur & Komponen Utama:
+a. Kartu Standing Pribadi ("Posisi Anda Saat Ini"):
+   - Menampilkan peringkat siswa di kelasnya sendiri dan di seluruh sekolah.
+   - Menghitung selisih hari ("Tambahkan X hari hadir untuk menyalip Juara di atas Anda").
+   - Menampilkan badge "Peringkat #1 Bersama (Seri)" jika bersaing ketat.
+b. Filter Scope Leaderboard:
+   - "Kelas Saya": Menampilkan klasemen khusus rekan sekelas siswa.
+   - "Seluruh Sekolah": Menampilkan klasemen terbuka seluruh siswa lintas tingkat.
+c. Filter Periode Waktu:
+   - Pekan Ini, Bulan Ini, dan Semester Rekor.
+d. Galeri Pencapaian & Lencana (Achievements):
+   - Misi Jenjang Kelas (Misi Adaptasi Kelas 7, Konsistensi Kelas 8, Kelulusan Kelas 9).
+   - Misi Musiman & Kalender Semester (misal: Kickoff Semester, Disiplin Ramadhan).
+   - Rekor Streak Beruntun (7 Hari, 14 Hari, 30 Hari, 60 Hari Tanpa Alpa).
+   - Chip filter dinamis dengan hitungan lencana riil yang selalu sinkron.
+
+Cara Menggunakan Fitur Ini:
+1. Siswa login ke Portal Siswa -> Buka tab "Peringkat Kelas".
+2. Lihat kartu posisi standing di bagian paling atas untuk mengecek peringkat diri.
+3. Klik tombol "Kelas Saya" untuk membandingkan dengan teman sekelas, atau klik 
+   "Seluruh Sekolah" untuk melihat peringkat umum.
+4. Klik tab "Pekan Ini" untuk melihat rekor minggu ini, atau "Semester" untuk rekor terjauh.
+5. Buka tab "Galeri Badges" untuk melihat trofi yang sudah didapat dan misi yang 
+   sedang berjalan.
+
+================================================================================
+6. FITUR TABEL MOBILE RAMAH SENTUHAN (RESPONSIVE HORIZONTAL SCROLL)
+================================================================================
+Deskripsi:
+Penyempurnaan tampilan seluruh tabel data pada layar smartphone agar tidak terpotong
+dan pengguna dapat membaca data lengkap dengan menggeser layar secara mulus.
+
+Fitur & Komponen Utama:
+a. Pembungkus `overflow-x-auto` & `min-width`:
+   - Seluruh tabel presensi, laporan KBM, rekap bulanan, dan leaderboard telah
+     diberi lebar minimum proporsional.
+b. Sentuhan Halus (Touch Scrolling):
+   - Tabel dapat digeser ke kiri dan kanan dengan sapuan jari pada smartphone 
+     tanpa menggeser seluruh layout website.
+c. Sticky Actions / Kolom Prioritas:
+   - Kolom penting (seperti Nama Siswa dan Aksi Tombol) tetap mudah diakses.
+
+Cara Menggunakan Fitur Ini:
+- Saat membuka aplikasi melalui ponsel cerdas (Android/iPhone):
+  1. Buka tabel presensi atau laporan yang memiliki banyak kolom.
+  2. Cukup geser (swipe) jari Anda ke kiri untuk melihat kolom sebelah kanan (seperti 
+     rekor streak, level, XP, atau tombol aksi).
+  3. Geser kembali ke kanan untuk melihat nama dan nomor induk siswa.
+
+================================================================================
+7. FITUR SINKRONISASI REAL-TIME & VALIDASI GEOFENCE GPS
+================================================================================
+Deskripsi:
+Infrastruktur backend data yang menghubungkan perangkat Guru, Siswa, dan Admin secara 
+langsung tanpa perlu refresh halaman manual.
+
+Fitur & Komponen Utama:
+a. Supabase Realtime Channel:
+   - Saat guru menyimpan absensi di kelas, status presensi di portal siswa dan 
+     laporan admin otomatis terupdate dalam hitungan detik.
+b. Background Auto-Sync:
+   - Sinkronisasi otomatis saat browser kembali dibuka (Visibility Change Event) 
+     serta interval background tiap 30 detik.
+c. Geofence Radius GPS Sekolah:
+   - Menghitung jarak presisi antara koordinat perangkat siswa dengan titik tengah 
+     sekolah menggunakan rumus Haversine.
+   - Mencegah siswa melakukan scan presensi dari luar pagar sekolah jika fitur 
+     radius diaktifkan oleh Admin.
+
+================================================================================
+8. PANDUAN RINGKAS PENGGUNAAN HARIAN (WORKFLOW)
+================================================================================
+
+A. ALUR UNTUK GURU PENGAJAR DI KELAS:
+   1. Guru login ke akun guru.
+   2. Opsi A (Tampilkan QR di Proyektor):
+      - Buka tab "QR Dinamis KBM".
+      - Proyeksikan kode QR ke layar LCD kelas.
+      - Siswa memindai QR tersebut dari tempat duduk mereka.
+   3. Opsi B (Presensi Manual / Panggilan Nama):
+      - Buka tab "Presensi Manual".
+      - Klik tombol [H] untuk siswa yang hadir, atau [S]/[I]/[A].
+      - Masukkan alasan pada kolom Keterangan bila ada.
+      - Klik "Simpan Seluruh Presensi ke Database".
+   4. Opsi C (Scan Kartu ID Card Siswa):
+      - Buka tab "Scan QR Siswa".
+      - Arahkan kamera HP ke kartu pelajar murid satu per satu.
+   5. Evaluasi Sikap Siswa:
+      - Buka tab "Radar Prestasi & Badges Siswa".
+      - Pantau peringkat kelas dan salin rekomendasi narasi untuk nilai rapor sikap.
+
+B. ALUR UNTUK SISWA:
+   1. Siswa login ke akun siswa.
+   2. Pada jam masuk, buka tab "Scan QR Presensi".
+   3. Pastikan GPS aktif dan terverifikasi di sekolah.
+   4. Klik "Buka Kamera Scan QR" dan arahkan ke proyektor guru.
+   5. Kehadiran langsung tersimpan, streak dan XP bertambah.
+   6. Buka tab "Peringkat Kelas" untuk melihat posisi juara di kelas.
+
+C. ALUR UNTUK ADMINISTRATOR SEKOLAH:
+   1. Admin login ke portal admin.
+   2. Mengatur titik koordinat & radius toleransi sekolah di menu "Pengaturan Sekolah".
+   3. Mengatur tahun ajaran aktif dan semester berjalan (Ganjil/Genap).
+   4. Memantau kehadiran langsung di menu "Pusat Laporan & Rekapitulasi Presensi".
+   5. Melihat "Hall of Fame Sekolah" untuk menentukan siswa teladan bulanan.
+
+================================================================================
+Dokumen ini dibuat secara otomatis dan disesuaikan dengan codebase terbaru SIAK.
+Semua fitur telah terintegrasi dengan database Supabase dan lolos uji kompilasi.
+================================================================================
