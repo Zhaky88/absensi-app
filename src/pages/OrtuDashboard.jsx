@@ -1469,7 +1469,7 @@ export default function OrtuDashboard() {
               {/* Mockup Balon Chat WhatsApp */}
               <div className="rounded-2xl border border-slate-200 overflow-hidden bg-[#efeae2] p-3 shadow-inner space-y-2.5 text-xs">
                 <div className="max-w-[90%] bg-white rounded-2xl rounded-tl-xs p-3 shadow-xs space-y-1 border border-slate-200/50">
-                  <span className="text-[10px] font-bold text-emerald-700 block">🏫 BOT SIAK SMPN 2</span>
+                  <span className="text-[10px] font-bold text-emerald-700 block">🏫 SIAK Presensi • SMP Negeri 2 Kota Bangun</span>
                   <p className="text-slate-800 text-[11px] leading-relaxed">
                     Yth. Orang Tua dari ananda <strong>{selectedChild.nama}</strong>,<br />
                     Kami menginformasikan bahwa ananda telah <strong>HADIR</strong> di sekolah dan mengikuti KBM hari ini pukul 07:12 WITA.

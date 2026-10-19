@@ -1089,7 +1089,7 @@ function StudentReportVisualSheet({
               </p>
             </div>
             <div className="text-[9px] text-slate-600 italic mt-1 pt-1 border-t border-slate-300/60">
-              * Dokumen ini sah dan diterbitkan resmi oleh Sistem Informasi Presensi Digital Sekolah (SIAK).
+              * Dokumen ini sah dan diterbitkan resmi oleh Sistem Informasi & Presensi Digital Sekolah (SIAK).
             </div>
           </div>
         </div>

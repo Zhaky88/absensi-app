@@ -262,7 +262,7 @@ export default function ClassScheduleReportModal({
                 <p class="kop-dinas">${schoolDinas}</p>
                 <h1 class="kop-sekolah">${schoolName}</h1>
                 <p class="kop-info">${schoolAddress} • ${schoolCity} • NPSN: ${schoolNpsn} • Akreditasi: ${schoolAkreditasi}</p>
-                <p class="kop-info">Sistem Informasi Akademik & Presensi Siswa • Kurikulum Merdeka</p>
+                <p class="kop-info">Sistem Informasi & Presensi Digital Sekolah • Kurikulum Merdeka</p>
               </div>
               <div style="width: 60px; text-align: center; border: 1.5px solid #cbd5e1; border-radius: 6px; padding: 4px;">
                 <div style="font-size: 8px; font-weight: 800; color: #475569;">TINGKAT</div>

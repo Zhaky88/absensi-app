@@ -2636,10 +2636,10 @@ export default function AdminDashboard() {
             </div>
             <div>
               <h1 className="font-bold text-sm text-white leading-tight">
-                SMPN 2 KOTA BANGUN
+                {settings.sekolah_nama || 'SMP NEGERI 2 KOTA BANGUN'}
               </h1>
               <p className="text-[10px] text-blue-400 font-medium tracking-wider uppercase">
-                Admin Panel • SIAK V4.0
+                Admin Panel • SIAK Presensi
               </p>
             </div>
           </div>
@@ -2818,7 +2818,7 @@ export default function AdminDashboard() {
                 {currentNavItem?.label}
               </h2>
               <p className="text-[11px] text-slate-500">
-                SIAK Enterprise • Sistem Informasi & Presensi Terpadu
+                SIAK Presensi • Sistem Informasi & Presensi Digital Sekolah
               </p>
             </div>
           </div>

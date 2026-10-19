@@ -1909,7 +1909,7 @@ export default function MuridDashboard() {
               )}
             </div>
             <div className="min-w-0 flex-1">
-              <h2 className="text-xs font-bold text-white truncate">{siswa?.nama || 'Murid SIAK'}</h2>
+              <h2 className="text-xs font-bold text-white truncate">{siswa?.nama || 'Siswa SIAK'}</h2>
               <div className="flex items-center gap-1.5 mt-0.5">
                 <span className="text-[10px] text-slate-400 font-mono">
                   NIS: {siswa?.nis || '202409001'}
@@ -2234,7 +2234,7 @@ export default function MuridDashboard() {
                   <div className="px-5 py-2.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
                     <div className="flex items-center gap-1.5">
                       <ShieldCheck className="w-3.5 h-3.5 text-blue-600" />
-                      <span>Sistem Informasi Akademik & Presensi</span>
+                      <span>Sistem Informasi & Presensi Digital Sekolah</span>
                     </div>
                     <span className="font-medium text-slate-600">
                       Kepala Sekolah: {settings.kepala_sekolah_nama}

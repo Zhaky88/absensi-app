@@ -420,7 +420,7 @@ export default function TeacherScheduleReportModal({
                   <p class="kop-dinas">${schoolDinas}</p>
                   <h1 class="kop-sekolah">${schoolName}</h1>
                   <p class="kop-info">${schoolAddress} • ${schoolCity} • NPSN: ${schoolNpsn} • Akreditasi: ${schoolAkreditasi}</p>
-                  <p class="kop-info">Sistem Informasi Akademik & Presensi Siswa • Kurikulum Merdeka</p>
+                  <p class="kop-info">Sistem Informasi & Presensi Digital Sekolah • Kurikulum Merdeka</p>
                 </div>
                 <div style="width: 60px; text-align: center; border: 1.5px solid #cbd5e1; border-radius: 6px; padding: 4px;">
                   <div style="font-size: 7.5px; font-weight: 800; color: #475569;">BEBAN JP</div>
@@ -1372,7 +1372,7 @@ export default function TeacherScheduleReportModal({
                             {schoolAddress} • {schoolCity} • NPSN: {schoolNpsn} • Akreditasi: {schoolAkreditasi}
                           </p>
                           <p className="text-[9px] text-gray-600 font-medium">
-                            Sistem Informasi Akademik & Presensi Siswa • Kurikulum Merdeka
+                            Sistem Informasi & Presensi Digital Sekolah • Kurikulum Merdeka
                           </p>
                         </div>
                         <div className="w-16 h-16 shrink-0 flex flex-col items-center justify-center border border-gray-400 rounded-xl p-1 bg-gray-50 text-center">

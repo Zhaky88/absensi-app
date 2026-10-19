@@ -119,7 +119,7 @@ export default function LoginPage() {
                 SMP NEGERI 2 KOTA BANGUN
               </h1>
               <p className="text-[11px] sm:text-xs text-cyan-200 flex items-center gap-1.5 font-medium">
-                <QrCode className="w-3.5 h-3.5 text-emerald-400" /> SIAK Anti-Cheat V4.0 + Gamifikasi
+                <QrCode className="w-3.5 h-3.5 text-emerald-400" /> SIAK Presensi • Sistem Informasi & Presensi Digital Sekolah
               </p>
             </div>
           </div>
@@ -145,7 +145,7 @@ export default function LoginPage() {
         <div className="glass-card rounded-3xl p-6 sm:p-8 shadow-xl border border-slate-200/80">
           <div className="text-center mb-6">
             <h2 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight">
-              Masuk ke SIAK
+              Masuk ke SIAK Presensi
             </h2>
             <p className="text-xs text-slate-500 mt-1">
               Gunakan Akun Pengguna (NIS / NIP / Email) Anda
@@ -321,7 +321,7 @@ export default function LoginPage() {
                 onClick={() => handleQuickDemoLogin('murid')}
                 className="px-2.5 py-1 rounded-xl bg-blue-100 hover:bg-blue-200 text-blue-700 font-bold text-[10px] transition-colors cursor-pointer"
               >
-                Masuk Murid
+                Masuk Siswa
               </button>
               <button
                 type="button"
@@ -342,7 +342,7 @@ export default function LoginPage() {
                 onClick={() => handleQuickDemoLogin('ortu')}
                 className="px-2.5 py-1 rounded-xl bg-purple-100 hover:bg-purple-200 text-purple-700 font-bold text-[10px] transition-colors cursor-pointer"
               >
-                Masuk Ortu
+                Masuk Orang Tua / Wali
               </button>
             </div>
           </div>
@@ -352,7 +352,7 @@ export default function LoginPage() {
 
       {/* Footer */}
       <footer className="text-center py-4 text-xs text-slate-400 border-t border-slate-200/60">
-        © 2026 SMP NEGERI 2 KOTA BANGUN — SIAK Anti-Cheat V4.0 Jamstack
+        © 2026 SMP Negeri 2 Kota Bangun — SIAK Presensi Digital
       </footer>
 
       {/* Modal Download / Pasang PWA */}

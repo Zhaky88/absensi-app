@@ -1252,7 +1252,7 @@ export default function GuruDashboard() {
           color: 'text-emerald-400',
           badge: currentActiveSchedule ? currentActiveSchedule.kelas?.nama_kelas : null,
         },
-        { id: 'scanner', label: 'Scan Kartu Murid', icon: Camera, color: 'text-cyan-400' },
+        { id: 'scanner', label: 'Scan Kartu Siswa', icon: Camera, color: 'text-cyan-400' },
         { id: 'manual', label: 'Presensi Manual Kelas', icon: Users, color: 'text-amber-400' },
         { id: 'jurnal', label: 'Jurnal Materi KBM', icon: BookOpen, color: 'text-blue-400' },
       ],
@@ -4356,7 +4356,7 @@ export default function GuruDashboard() {
 
           {/* Footer Fullscreen */}
           <div className="text-center text-xs text-slate-500">
-            Guru Pengampu: {guru?.nama || 'Pendidik'} • SIAK Enterprise Presence System
+            Guru Pengampu: {guru?.nama || 'Pendidik'} • SIAK Presensi Digital
           </div>
         </div>
       )}

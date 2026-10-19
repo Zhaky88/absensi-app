@@ -451,7 +451,7 @@ Dengan ini kami menginformasikan bahwa data kehadiran ananda pada:
 *Status Presensi:* *${statusText}*
 *Keterangan:* ${item.keterangan || '-'}
 
-Pesan ini dikirim secara otomatis melalui Sistem Informasi Akademik & Kehadiran (SIAK). Terima kasih atas perhatian Bapak/Ibu.`;
+Pesan ini dikirim secara otomatis melalui Sistem Informasi & Presensi Digital Sekolah (SIAK). Terima kasih atas perhatian Bapak/Ibu.`;
 
     const encoded = encodeURIComponent(msg);
     window.open(`https://wa.me/${finalPhone}?text=${encoded}`, '_blank');
