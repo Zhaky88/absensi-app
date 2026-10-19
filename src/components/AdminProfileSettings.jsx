@@ -24,6 +24,7 @@ import {
   Copy,
   Sliders,
   ShieldAlert,
+  ShieldCheck,
   Laptop,
   Globe,
   SlidersHorizontal,
@@ -447,13 +448,13 @@ export default function AdminProfileSettings({ onProfileUpdated }) {
       {/* ========================================================= */}
       {/* 1. HERO BANNER PROFILE OVERVIEW                           */}
       {/* ========================================================= */}
-      <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 text-white rounded-3xl p-6 sm:p-8 shadow-xl border border-slate-700/60 relative overflow-hidden">
+      <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 text-white rounded-3xl p-5 sm:p-8 shadow-xl border border-slate-700/60 relative overflow-hidden">
         {/* Glow Decor Background */}
         <div className="absolute top-0 right-0 -mt-10 -mr-10 w-64 h-64 bg-blue-500/15 rounded-full blur-3xl pointer-events-none" />
         <div className="absolute bottom-0 left-1/3 -mb-10 w-48 h-48 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none" />
 
-        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="flex flex-col sm:flex-row items-center sm:items-start gap-5 text-center sm:text-left">
+        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-5 sm:gap-6">
+          <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4 sm:gap-5 text-center sm:text-left min-w-0 flex-1">
             {/* Avatar dengan Badge Status */}
             <div className="relative group shrink-0">
               <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl bg-slate-800 p-1 border-2 border-white/20 shadow-lg overflow-hidden flex items-center justify-center">
@@ -475,41 +476,41 @@ export default function AdminProfileSettings({ onProfileUpdated }) {
               </span>
             </div>
 
-            <div className="space-y-1">
-              <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
-                <span className="px-3 py-0.5 rounded-full bg-blue-600 text-white text-[10px] font-black uppercase tracking-wider shadow-xs">
+            <div className="space-y-1.5 min-w-0 flex-1 w-full">
+              <div className="flex flex-wrap items-center justify-center sm:justify-start gap-1.5 sm:gap-2">
+                <span className="px-2.5 py-0.5 rounded-full bg-blue-600 text-white text-[10px] font-black uppercase tracking-wider shadow-xs">
                   Super Administrator
                 </span>
-                <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-mono font-bold border border-emerald-400/30">
+                <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-mono font-bold border border-emerald-400/30">
                   Level 0 • Root Access
                 </span>
-                <span className="px-2.5 py-0.5 rounded-full bg-white/10 text-slate-300 text-[10px] font-bold">
+                <span className="px-2 py-0.5 rounded-full bg-white/10 text-slate-300 text-[10px] font-bold">
                   SIAK V4.0
                 </span>
               </div>
 
-              <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight">
+              <h1 className="text-lg sm:text-2xl font-black text-white tracking-tight break-words">
                 {profile.nama}
               </h1>
 
-              <p className="text-xs text-slate-300 font-medium">
+              <p className="text-xs text-slate-300 font-medium break-words">
                 {profile.jabatan}
               </p>
 
-              <div className="flex flex-wrap items-center justify-center sm:justify-start gap-3 pt-1 text-slate-400 text-xs">
-                <span className="flex items-center gap-1.5 font-mono">
-                  <Mail className="w-3.5 h-3.5 text-blue-400" />
-                  {profile.email}
+              <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 sm:gap-3 pt-1 text-slate-400 text-xs">
+                <span className="flex items-center gap-1.5 font-mono break-all text-left">
+                  <Mail className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                  <span>{profile.email}</span>
                 </span>
-                <span>•</span>
-                <span className="flex items-center gap-1.5 font-mono">
-                  <Key className="w-3.5 h-3.5 text-amber-400" />
-                  @{profile.username}
+                <span className="hidden sm:inline text-slate-600">•</span>
+                <span className="flex items-center gap-1.5 font-mono break-all text-left">
+                  <Key className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <span>@{profile.username}</span>
                 </span>
                 {profile.nip && (
                   <>
-                    <span>•</span>
-                    <span className="text-[11px] font-mono">NIP: {profile.nip}</span>
+                    <span className="hidden sm:inline text-slate-600">•</span>
+                    <span className="text-[11px] font-mono break-all text-left">NIP: {profile.nip}</span>
                   </>
                 )}
               </div>
@@ -517,24 +518,24 @@ export default function AdminProfileSettings({ onProfileUpdated }) {
           </div>
 
           {/* Quick Action Buttons */}
-          <div className="flex flex-row md:flex-col items-center justify-center gap-2.5 shrink-0 pt-3 md:pt-0 border-t md:border-t-0 border-white/10">
+          <div className="flex flex-row md:flex-col items-center justify-center gap-2 shrink-0 pt-3 md:pt-0 border-t md:border-t-0 border-white/10 w-full md:w-auto">
             <button
               type="button"
               onClick={handleCopyCredentials}
-              className="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 active:scale-95 text-white text-xs font-bold transition-all flex items-center gap-2 cursor-pointer border border-white/15"
+              className="flex-1 md:flex-initial w-full px-3.5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 active:scale-95 text-white text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer border border-white/15"
               title="Salin Kredensial Administrator ke Catatan"
             >
-              <Copy className="w-3.5 h-3.5 text-cyan-300" />
+              <Copy className="w-3.5 h-3.5 text-cyan-300 shrink-0" />
               <span>Salin Akun</span>
             </button>
 
             <button
               type="button"
               onClick={handleResetToFactoryDefaults}
-              className="px-3.5 py-2 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 active:scale-95 text-rose-200 text-xs font-bold transition-all flex items-center gap-2 cursor-pointer border border-rose-400/30"
+              className="flex-1 md:flex-initial w-full px-3.5 py-2.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 active:scale-95 text-rose-200 text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer border border-rose-400/30"
               title="Kembalikan nama dan kata sandi ke bawaan pabrik"
             >
-              <RotateCcw className="w-3.5 h-3.5 text-rose-300" />
+              <RotateCcw className="w-3.5 h-3.5 text-rose-300 shrink-0" />
               <span>Reset Default</span>
             </button>
           </div>
@@ -544,7 +545,7 @@ export default function AdminProfileSettings({ onProfileUpdated }) {
       {/* ========================================================= */}
       {/* 2. SUBTAB NAVIGATION (PREMIUM PILL SWITCHER)              */}
       {/* ========================================================= */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar border-b border-slate-200">
+      <div className="flex items-center gap-2 overflow-x-auto pb-2 no-scrollbar border-b border-slate-200 -mx-4 px-4 sm:mx-0 sm:px-0">
         {[
           { id: 'biodata', label: 'Biodata & Identitas', icon: UserCheck, color: 'text-blue-600' },
           { id: 'keamanan', label: 'Kredensial & Sandi', icon: Lock, color: 'text-amber-600' },
@@ -577,22 +578,22 @@ export default function AdminProfileSettings({ onProfileUpdated }) {
       {activeSubTab === 'biodata' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Form Identitas (2 Kolom) */}
-          <div className="lg:col-span-2 bg-white rounded-3xl p-6 sm:p-7 shadow-sm border border-slate-200 space-y-6">
-            <div className="flex items-center justify-between pb-4 border-b border-slate-100">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-200 text-blue-600 flex items-center justify-center">
+          <div className="lg:col-span-2 bg-white rounded-3xl p-5 sm:p-7 shadow-sm border border-slate-200 space-y-5 sm:space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-200 text-blue-600 flex items-center justify-center shrink-0">
                   <UserCheck className="w-5 h-5" />
                 </div>
-                <div>
-                  <h3 className="text-sm font-black text-slate-900">
+                <div className="min-w-0">
+                  <h3 className="text-sm font-black text-slate-900 leading-snug break-words">
                     Biodata & Informasi Administrator
                   </h3>
-                  <p className="text-xs text-slate-500">
+                  <p className="text-xs text-slate-500 leading-relaxed">
                     Nama dan kontak resmi yang tampil pada panel dan laporan sistem
                   </p>
                 </div>
               </div>
-              <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-md bg-blue-50 text-blue-700 border border-blue-200">
+              <span className="self-start sm:self-auto text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-md bg-blue-50 text-blue-700 border border-blue-200 shrink-0">
                 Profil Utama
               </span>
             </div>
@@ -715,7 +716,7 @@ export default function AdminProfileSettings({ onProfileUpdated }) {
                 <button
                   type="submit"
                   disabled={savingProfile}
-                  className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-2 disabled:opacity-50"
+                  className="w-full sm:w-auto px-6 py-2.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
                 >
                   {savingProfile ? (
                     <>
@@ -734,7 +735,7 @@ export default function AdminProfileSettings({ onProfileUpdated }) {
           </div>
 
           {/* Kolom Kanan: Pengaturan Avatar Foto Profil */}
-          <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-200 space-y-5">
+          <div className="bg-white rounded-3xl p-5 sm:p-6 shadow-sm border border-slate-200 space-y-5">
             <div className="pb-3 border-b border-slate-100">
               <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-amber-500" />
@@ -818,17 +819,17 @@ export default function AdminProfileSettings({ onProfileUpdated }) {
       {activeSubTab === 'keamanan' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Form Ganti Password (2 Kolom) */}
-          <div className="lg:col-span-2 bg-white rounded-3xl p-6 sm:p-7 shadow-sm border border-slate-200 space-y-6">
-            <div className="flex items-center justify-between pb-4 border-b border-slate-100">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-amber-50 border border-amber-200 text-amber-600 flex items-center justify-center">
+          <div className="lg:col-span-2 bg-white rounded-3xl p-5 sm:p-7 shadow-sm border border-slate-200 space-y-5 sm:space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-xl bg-amber-50 border border-amber-200 text-amber-600 flex items-center justify-center shrink-0">
                   <Lock className="w-5 h-5" />
                 </div>
-                <div>
-                  <h3 className="text-sm font-black text-slate-900">
+                <div className="min-w-0">
+                  <h3 className="text-sm font-black text-slate-900 leading-snug break-words">
                     Pengaturan Kata Sandi & Kredensial
                   </h3>
-                  <p className="text-xs text-slate-500">
+                  <p className="text-xs text-slate-500 leading-relaxed">
                     Ganti kata sandi akun Administrator untuk menjaga keamanan akses master
                   </p>
                 </div>
@@ -837,10 +838,10 @@ export default function AdminProfileSettings({ onProfileUpdated }) {
               <button
                 type="button"
                 onClick={handleGenerateRandomPassword}
-                className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 border border-amber-200"
+                className="w-full sm:w-auto px-3.5 py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 border border-amber-200 shrink-0"
                 title="Buat kata sandi acak yang kuat"
               >
-                <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+                <Sparkles className="w-3.5 h-3.5 text-amber-600 shrink-0" />
                 <span>Buat Sandi Acak</span>
               </button>
             </div>
@@ -848,7 +849,7 @@ export default function AdminProfileSettings({ onProfileUpdated }) {
             <form onSubmit={handleSavePassword} className="space-y-4">
               {/* Kata Sandi Lama */}
               <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <label className="block text-xs font-bold text-slate-700">
                     Kata Sandi Saat Ini (Lama)
                   </label>
@@ -944,16 +945,16 @@ export default function AdminProfileSettings({ onProfileUpdated }) {
               )}
 
               {/* Tombol Simpan Sandi */}
-              <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
+              <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <span className="text-[11px] text-slate-400 flex items-center gap-1.5 font-medium">
-                  <ShieldCheck className="w-4 h-4 text-emerald-500" />
-                  Sandi terenkripsi pada sesi lokal & cloud
+                  <ShieldCheck className="w-4 h-4 text-emerald-500 shrink-0" />
+                  <span>Sandi terenkripsi pada sesi lokal & cloud</span>
                 </span>
 
                 <button
                   type="submit"
                   disabled={savingPass}
-                  className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 active:scale-95 text-white font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-2 disabled:opacity-50"
+                  className="w-full sm:w-auto px-6 py-2.5 bg-slate-900 hover:bg-slate-800 active:scale-95 text-white font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
                 >
                   {savingPass ? (
                     <>
@@ -1014,22 +1015,22 @@ export default function AdminProfileSettings({ onProfileUpdated }) {
       {activeSubTab === 'akses' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Matriks Wewenang Hak Akses (2 Kolom) */}
-          <div className="lg:col-span-2 bg-white rounded-3xl p-6 sm:p-7 shadow-sm border border-slate-200 space-y-5">
-            <div className="flex items-center justify-between pb-4 border-b border-slate-100">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-600 flex items-center justify-center">
+          <div className="lg:col-span-2 bg-white rounded-3xl p-5 sm:p-7 shadow-sm border border-slate-200 space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-600 flex items-center justify-center shrink-0">
                   <Shield className="w-5 h-5" />
                 </div>
-                <div>
-                  <h3 className="text-sm font-black text-slate-900">
+                <div className="min-w-0">
+                  <h3 className="text-sm font-black text-slate-900 leading-snug break-words">
                     Matriks Hak Akses & Wewenang Super Admin
                   </h3>
-                  <p className="text-xs text-slate-500">
+                  <p className="text-xs text-slate-500 leading-relaxed">
                     Tingkat wewenang penuh untuk mengelola seluruh data institusi sekolah
                   </p>
                 </div>
               </div>
-              <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200">
+              <span className="self-start sm:self-auto text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
                 Full Privileges
               </span>
             </div>
@@ -1037,21 +1038,21 @@ export default function AdminProfileSettings({ onProfileUpdated }) {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
               {[
                 { title: 'Master Data Siswa & Guru', desc: 'Akses penuh tambah, ubah, hapus, dan import massal Excel' },
-                { title: 'Rombel, Kelas & Promosi', desc: 'Kenaikan kelas massal, plotting kelas, dan arsip kelulusan' },
+                { title: 'Manajemen Kelas & Promosi', desc: 'Kenaikan kelas massal, plotting kelas, dan arsip kelulusan' },
                 { title: 'Jadwal & Mata Pelajaran', desc: 'Pengaturan jadwal KBM harian, jam mengajar, dan guru pengganti/inval' },
                 { title: 'Kalender Akademik & Libur', desc: 'Penetapan tahun ajaran, semester, kaldik, dan libur streak' },
                 { title: 'Geofencing GPS & Radius', desc: 'Koordinat gerbang sekolah dan batas radius toleransi presensi' },
                 { title: 'WhatsApp Gateway Provider', desc: 'API Token gateway, notifikasi otomatis, dan antrean pesan ortu' },
                 { title: 'Database CRUD Studio', desc: 'Akses langsung inspeksi dan modifikasi seluruh tabel SQL' },
-                { title: 'Gamifikasi & Quest Builder', desc: 'Pembuatan misi prestasi sekolah dan piagam penghargaan' },
+                { title: 'Gamifikasi & Quest Builder', desc: 'Pembuatan misi prestasi kedisiplinan sekolah' },
               ].map((item, idx) => (
                 <div key={idx} className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 flex items-start gap-2.5">
                   <div className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 mt-0.5">
                     <Check className="w-3 h-3 stroke-[3]" />
                   </div>
-                  <div>
-                    <span className="font-bold text-slate-800 block leading-tight">{item.title}</span>
-                    <span className="text-[11px] text-slate-500 mt-0.5 block leading-relaxed">{item.desc}</span>
+                  <div className="min-w-0 flex-1">
+                    <span className="font-bold text-slate-800 block leading-tight break-words">{item.title}</span>
+                    <span className="text-[11px] text-slate-500 mt-0.5 block leading-relaxed break-words">{item.desc}</span>
                   </div>
                 </div>
               ))}
@@ -1059,13 +1060,13 @@ export default function AdminProfileSettings({ onProfileUpdated }) {
           </div>
 
           {/* Kolom Kanan: Sesi Perangkat & Fingerprint */}
-          <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-200 space-y-5">
+          <div className="bg-white rounded-3xl p-5 sm:p-6 shadow-sm border border-slate-200 space-y-5">
             <div className="pb-3 border-b border-slate-100">
               <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
-                <Laptop className="w-4 h-4 text-blue-600" />
-                Audit Keamanan Perangkat
+                <Laptop className="w-4 h-4 text-blue-600 shrink-0" />
+                <span>Audit Keamanan Perangkat</span>
               </h4>
-              <p className="text-[11px] text-slate-500 mt-0.5">Informasi sesi browser aktif saat ini</p>
+              <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">Informasi sesi browser aktif saat ini</p>
             </div>
 
             <div className="space-y-3 text-xs">
@@ -1073,28 +1074,28 @@ export default function AdminProfileSettings({ onProfileUpdated }) {
                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
                   Device Fingerprint ID
                 </span>
-                <span className="font-mono font-black text-blue-700 text-xs block truncate">
+                <span className="font-mono font-bold text-blue-700 text-xs block break-all">
                   {deviceId}
                 </span>
               </div>
 
               <div className="space-y-2 text-xs">
-                <div className="flex items-center justify-between py-1 border-b border-slate-100">
+                <div className="flex items-center justify-between py-1 border-b border-slate-100 gap-2">
                   <span className="text-slate-500">Status Koneksi:</span>
-                  <span className="font-bold text-emerald-600 flex items-center gap-1">
+                  <span className="font-bold text-emerald-600 flex items-center gap-1 shrink-0">
                     <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                     {isSupabaseConfigured ? 'Cloud Terkoneksi' : 'Sesi Lokal Aktif'}
                   </span>
                 </div>
 
-                <div className="flex items-center justify-between py-1 border-b border-slate-100">
+                <div className="flex items-center justify-between py-1 border-b border-slate-100 gap-2">
                   <span className="text-slate-500">Enkripsi Sesi:</span>
-                  <span className="font-mono font-bold text-slate-800">TLS v1.3 / SSL</span>
+                  <span className="font-mono font-bold text-slate-800 shrink-0">TLS v1.3 / SSL</span>
                 </div>
 
-                <div className="flex items-center justify-between py-1 border-b border-slate-100">
+                <div className="flex items-center justify-between py-1 border-b border-slate-100 gap-2">
                   <span className="text-slate-500">Waktu Akses:</span>
-                  <span className="font-bold text-slate-700">
+                  <span className="font-bold text-slate-700 shrink-0">
                     {new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WITA
                   </span>
                 </div>
@@ -1105,7 +1106,7 @@ export default function AdminProfileSettings({ onProfileUpdated }) {
                 onClick={handleClearLocalCache}
                 className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer mt-2"
               >
-                <RefreshCw className="w-3.5 h-3.5" />
+                <RefreshCw className="w-3.5 h-3.5 shrink-0" />
                 <span>Bersihkan Cache Sesi</span>
               </button>
             </div>
@@ -1117,17 +1118,17 @@ export default function AdminProfileSettings({ onProfileUpdated }) {
       {/* TAB 4: PREFERENSI SISTEM & ANTARMUKA                     */}
       {/* ========================================================= */}
       {activeSubTab === 'preferensi' && (
-        <div className="bg-white rounded-3xl p-6 sm:p-8 shadow-sm border border-slate-200 space-y-6 max-w-3xl">
-          <div className="flex items-center justify-between pb-4 border-b border-slate-100">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-purple-50 border border-purple-200 text-purple-600 flex items-center justify-center">
+        <div className="bg-white rounded-3xl p-5 sm:p-8 shadow-sm border border-slate-200 space-y-6 max-w-3xl">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-xl bg-purple-50 border border-purple-200 text-purple-600 flex items-center justify-center shrink-0">
                 <Sliders className="w-5 h-5" />
               </div>
-              <div>
-                <h3 className="text-sm font-black text-slate-900">
+              <div className="min-w-0">
+                <h3 className="text-sm font-black text-slate-900 leading-snug break-words">
                   Preferensi & Pengaturan Antarmuka Admin
                 </h3>
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-slate-500 leading-relaxed">
                   Sesuaikan pengalaman penggunaan dashboard saat presentasi atau audit harian
                 </p>
               </div>
@@ -1152,7 +1153,7 @@ export default function AdminProfileSettings({ onProfileUpdated }) {
                 <option value="laporan">Rekap & Laporan Presensi</option>
                 <option value="settings">Pengaturan Sekolah & GPS</option>
               </select>
-              <p className="text-[11px] text-slate-500">
+              <p className="text-[11px] text-slate-500 leading-relaxed">
                 Halaman yang otomatis terbuka saat Anda berhasil login sebagai Administrator.
               </p>
             </div>
@@ -1162,7 +1163,7 @@ export default function AdminProfileSettings({ onProfileUpdated }) {
               <label className="block text-xs font-bold text-slate-700">
                 Durasi Tampilan Pesan Notifikasi (Toast)
               </label>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3">
                 {[
                   { id: 'fast', label: 'Cepat (2.5 Detik)' },
                   { id: 'normal', label: 'Normal (4 Detik)' },
@@ -1186,12 +1187,12 @@ export default function AdminProfileSettings({ onProfileUpdated }) {
 
             {/* Proteksi & Konfirmasi Hapus Data */}
             <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
-              <label className="flex items-center justify-between cursor-pointer">
-                <div>
-                  <span className="text-xs font-bold text-slate-800 block">
+              <label className="flex items-center justify-between cursor-pointer gap-3">
+                <div className="min-w-0 flex-1">
+                  <span className="text-xs font-bold text-slate-800 block leading-snug break-words">
                     Konfirmasi Ganda Saat Hapus Data
                   </span>
-                  <span className="text-[11px] text-slate-500 block mt-0.5">
+                  <span className="text-[11px] text-slate-500 block mt-0.5 leading-relaxed break-words">
                     Menampilkan dialog konfirmasi khusus sebelum menghapus siswa, guru, atau jadwal KBM
                   </span>
                 </div>
@@ -1199,17 +1200,17 @@ export default function AdminProfileSettings({ onProfileUpdated }) {
                   type="checkbox"
                   checked={preferences.doubleConfirmDelete}
                   onChange={(e) => setPreferences({ ...preferences, doubleConfirmDelete: e.target.checked })}
-                  className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-slate-300 cursor-pointer"
+                  className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-slate-300 cursor-pointer shrink-0"
                 />
               </label>
 
               <div className="border-t border-slate-200/80 pt-3">
-                <label className="flex items-center justify-between cursor-pointer">
-                  <div>
-                    <span className="text-xs font-bold text-slate-800 block">
+                <label className="flex items-center justify-between cursor-pointer gap-3">
+                  <div className="min-w-0 flex-1">
+                    <span className="text-xs font-bold text-slate-800 block leading-snug break-words">
                       Mode Privasi Layar Proyektor (Masking Data)
                     </span>
-                    <span className="text-[11px] text-slate-500 block mt-0.5">
+                    <span className="text-[11px] text-slate-500 block mt-0.5 leading-relaxed break-words">
                       Samarkan sebagian angka NIK dan nomor telepon saat memproyeksikan layar admin
                     </span>
                   </div>
@@ -1217,7 +1218,7 @@ export default function AdminProfileSettings({ onProfileUpdated }) {
                     type="checkbox"
                     checked={preferences.maskSensitiveData}
                     onChange={(e) => setPreferences({ ...preferences, maskSensitiveData: e.target.checked })}
-                    className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-slate-300 cursor-pointer"
+                    className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-slate-300 cursor-pointer shrink-0"
                   />
                 </label>
               </div>
@@ -1226,9 +1227,9 @@ export default function AdminProfileSettings({ onProfileUpdated }) {
             <div className="pt-3 border-t border-slate-100 flex items-center justify-end">
               <button
                 type="submit"
-                className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-2"
+                className="w-full sm:w-auto px-6 py-2.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center justify-center gap-2"
               >
-                <Save className="w-3.5 h-3.5" />
+                <Save className="w-3.5 h-3.5 shrink-0" />
                 <span>Simpan Preferensi</span>
               </button>
             </div>

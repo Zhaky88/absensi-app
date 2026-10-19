@@ -32,6 +32,7 @@ import {
   Folder,
   FolderOpen,
   LayoutGrid,
+  Grid,
   ListFilter,
   Menu,
   X,
@@ -59,22 +60,39 @@ import {
   Trophy,
   Flame,
   Sparkles,
+  Activity,
+  Crown,
+  School,
+  Medal,
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import * as XLSX from 'xlsx';
 import ClassAttendanceCalendar from '../components/ClassAttendanceCalendar';
 import ClassAttendanceReportModal from '../components/ClassAttendanceReportModal';
 import StudentAttendancePdfModal from '../components/StudentAttendancePdfModal';
+import TeacherScheduleReportModal from '../components/TeacherScheduleReportModal';
+import ClassScheduleReportModal from '../components/ClassScheduleReportModal';
 import SchoolIdentitySettings from '../components/SchoolIdentitySettings';
 import AdminLaporanCenter from '../components/AdminLaporanCenter';
+import AdminAttendanceManager from '../components/AdminAttendanceManager';
 import DatabaseCrudStudio from '../components/DatabaseCrudStudio';
 import GpsLocationPicker from '../components/GpsLocationPicker';
 import ParentAccountsManager from '../components/ParentAccountsManager';
 import StudentAchievementModal from '../components/StudentAchievementModal';
-import SchoolCertificateModal from '../components/SchoolCertificateModal';
 import AdminQuestBuilderModal from '../components/AdminQuestBuilderModal';
 import AdminProfileSettings from '../components/AdminProfileSettings';
-import { calculateStudentAchievementsSummary, getMasterAchievements, getCustomMissions } from '../lib/achievementManager';
+import AdminActivityLogCenter from '../components/AdminActivityLogCenter';
+import {
+  calculateStudentAchievementsSummary,
+  getMasterAchievements,
+  getCustomMissions,
+  calculateSemesterEffectiveDays,
+  calculateElapsedEffectiveSchoolDays,
+  calculateClassDisciplineLeaderboard,
+  calculateGradeDisciplineComparison,
+  sortAndRankStudentsByStreak,
+  assignSharedRanks,
+} from '../lib/achievementManager';
 import {
   getInvalAssignments,
   saveInvalAssignment,
@@ -88,7 +106,28 @@ import { useToast } from '../context/ToastModalContext';
 export default function AdminDashboard() {
   const { userProfile, setUserProfile, logout } = useAuth();
   const { toast, showConfirm, showAlert } = useToast();
-  const [activeTab, setActiveTab] = useState('siswa'); // 'siswa' | 'guru' | 'kelas' | 'jadwal' | 'import' | 'promosi' | 'laporan' | 'settings' | 'kalender' | 'gamifikasi' | 'profil_admin'
+  const [activeTab, setActiveTab] = useState(() => {
+    try {
+      const hash = window.location.hash;
+      if (hash && hash.startsWith('#tab=')) {
+        const tabFromHash = decodeURIComponent(hash.replace('#tab=', ''));
+        if (tabFromHash) return tabFromHash;
+      }
+      return localStorage.getItem('siak_active_tab_admin') || 'siswa';
+    } catch (e) {
+      return 'siswa';
+    }
+  });
+
+  useEffect(() => {
+    if (activeTab) {
+      try {
+        localStorage.setItem('siak_active_tab_admin', activeTab);
+        window.history.replaceState(null, '', `#tab=${encodeURIComponent(activeTab)}`);
+      } catch (e) {}
+    }
+  }, [activeTab]);
+
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // State Profil Administrator
@@ -107,9 +146,9 @@ export default function AdminDashboard() {
 
   // State Gamifikasi & Hall of Fame Admin
   const [selectedStudentForAchievement, setSelectedStudentForAchievement] = useState(null);
-  const [selectedStudentForCert, setSelectedStudentForCert] = useState(null);
-  const [certSummary, setCertSummary] = useState(null);
-  const [gamifikasiSubTab, setGamifikasiSubTab] = useState('hall_of_fame'); // 'hall_of_fame' | 'misi_sekolah' | 'piagam'
+  const [gamifikasiSubTab, setGamifikasiSubTab] = useState('hall_of_fame'); // 'hall_of_fame' | 'misi_sekolah'
+  const [hallOfFameCategory, setHallOfFameCategory] = useState('streak'); // 'streak' | 'kelas' | 'tingkat'
+  const [hallOfFamePeriod, setHallOfFamePeriod] = useState('month'); // 'week' | 'month' | 'semester'
   const [gamifikasiFilterKelas, setGamifikasiFilterKelas] = useState('all');
   const [gamifikasiFilterTingkat, setGamifikasiFilterTingkat] = useState('all');
   const [isQuestBuilderModalOpen, setIsQuestBuilderModalOpen] = useState(false);
@@ -144,6 +183,18 @@ export default function AdminDashboard() {
   const [selectedStudentForPdf, setSelectedStudentForPdf] = useState(null);
   const [isPdfModalOpen, setIsPdfModalOpen] = useState(false);
 
+  // State untuk Tab Kelola Data Absensi (View Mode & Selected Class)
+  const [attendanceManagerView, setAttendanceManagerView] = useState('table');
+  const [attendanceManagerClassId, setAttendanceManagerClassId] = useState('all');
+
+  // Sub-Tab di Halaman Kelas: 'kelas' | 'mapel'
+  const [kelasSubTab, setKelasSubTab] = useState('kelas');
+  const [kbmDaySchedule, setKbmDaySchedule] = useState(() => {
+    const today = ['Ahad', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'][new Date().getDay()];
+    return today === 'Ahad' ? 'Senin' : today;
+  });
+  const [kbmClassFilter, setKbmClassFilter] = useState('all');
+
   // Search & Filter State
   const [searchTerm, setSearchTerm] = useState('');
   const [filterKelas, setFilterKelas] = useState('');
@@ -155,16 +206,22 @@ export default function AdminDashboard() {
   // Modals & Forms
   const [modalType, setModalType] = useState(null); // 'add_siswa' | 'edit_siswa' | 'add_guru' | 'edit_guru' | 'add_kelas' | 'add_mapel' | 'add_jadwal'
   const [formData, setFormData] = useState({});
-  const [rombelFormat, setRombelFormat] = useState('angka'); // 'angka' | 'huruf'
-  const [rombelNumbers, setRombelNumbers] = useState(['1', '2', '3', '4', '5']);
-  const [rombelLetters, setRombelLetters] = useState(['A', 'B', 'C', 'D', 'E']);
-  const [customRombelInput, setCustomRombelInput] = useState('');
+  const [paralelFormat, setParalelFormat] = useState('angka'); // 'angka' | 'huruf'
+  const [paralelNumbers, setParalelNumbers] = useState(['1', '2', '3', '4', '5']);
+  const [paralelLetters, setParalelLetters] = useState(['A', 'B', 'C', 'D', 'E']);
+  const [customParalelInput, setCustomParalelInput] = useState('');
   const [savingMapel, setSavingMapel] = useState(false);
   const [searchSubject, setSearchSubject] = useState('');
   const [searchTeacher, setSearchTeacher] = useState('');
   const [filterTeacherRole, setFilterTeacherRole] = useState('semua'); // 'semua' | 'pengajar' | 'wali_kelas' | 'bk'
   const [filterTeacherSubject, setFilterTeacherSubject] = useState('semua'); // 'semua' | 'tanpa_jadwal' | string (nama_mapel/id_mapel)
   const [selectedTeacherForSchedule, setSelectedTeacherForSchedule] = useState(null);
+  const [selectedTeacherForSchedulePrint, setSelectedTeacherForSchedulePrint] = useState(null);
+  const [schedulePrintModalOpen, setSchedulePrintModalOpen] = useState(false);
+  const [schedulePrintMode, setSchedulePrintMode] = useState('single'); // 'single' | 'all_individual' | 'master_matrix'
+  const [selectedClassForSchedulePrint, setSelectedClassForSchedulePrint] = useState(null);
+  const [classSchedulePrintModalOpen, setClassSchedulePrintModalOpen] = useState(false);
+  const [classSchedulePrintMode, setClassSchedulePrintMode] = useState('single_class'); // 'single_class' | 'all_classes'
   const [savingTeacher, setSavingTeacher] = useState(false);
   const [copiedNip, setCopiedNip] = useState(null);
   const [jadwalSubTab, setJadwalSubTab] = useState('kelas'); // 'kelas' | 'guru' | 'mapel' | 'semua'
@@ -174,6 +231,18 @@ export default function AdminDashboard() {
   const [filterJadwalHari, setFilterJadwalHari] = useState('semua');
   const [selectedStudentForCard, setSelectedStudentForCard] = useState(null);
   const [idCardQrUrl, setIdCardQrUrl] = useState('');
+
+  // Sync body class for print isolation
+  useEffect(() => {
+    if (selectedStudentForCard) {
+      document.body.classList.add('print-modal-open');
+    } else {
+      document.body.classList.remove('print-modal-open');
+    }
+    return () => {
+      document.body.classList.remove('print-modal-open');
+    };
+  }, [selectedStudentForCard]);
 
   // Inval / Guru Pengganti State
   const [invalAssignments, setInvalAssignments] = useState(() => getInvalAssignments());
@@ -190,7 +259,7 @@ export default function AdminDashboard() {
   const [showAccountPassword, setShowAccountPassword] = useState(false);
   const [openActionMenuNis, setOpenActionMenuNis] = useState(null);
 
-  // Kenaikan Kelas & Distribusi Rombel Wizard State
+  // Kenaikan Kelas & Distribusi Kelas Wizard State
   const [promotionStep, setPromotionStep] = useState(1); // 1: Pengecualian Siswa, 2: Pilih Metode Distribusi, 3: Ringkasan & Eksekusi
   const [retainedStudentNis, setRetainedStudentNis] = useState([]); // Siswa 7 & 8 yang tinggal kelas (dikecualikan dari promosi)
   const [ungraduatedStudentNis, setUngraduatedStudentNis] = useState([]); // Siswa 9 yang tidak lulus / mengulang
@@ -239,7 +308,6 @@ export default function AdminDashboard() {
         wa_gateway_api_url: saved.wa_gateway_api_url || 'https://api.fonnte.com/send',
         wa_gateway_api_key: saved.wa_gateway_api_key || 'SAMPLE_FONNTE_KEY_XYZ123',
         wa_template_alpa: saved.wa_template_alpa || 'Pemberitahuan Presensi:\nYth. Bpk/Ibu {{nama_ortu}},\n\nKami menginformasikan bahwa ananda *{{nama_siswa}}* (NIS: {{nis}}) tercatat *ALPA (Tanpa Keterangan)* pada hari {{tanggal}}.\n\nMohon konfirmasi jika ananda berhalangan hadir. Terima kasih.',
-        wa_template_terlambat: saved.wa_template_terlambat || 'Pemberitahuan Presensi:\nYth. Bpk/Ibu {{nama_ortu}},\n\nAnanda *{{nama_siswa}}* tercatat *TERLAMBAT* hadir pada mata pelajaran {{mapel}} hari ini pukul {{waktu}}.',
         wa_template_hadir: saved.wa_template_hadir || 'Pemberitahuan Presensi:\nYth. Bpk/Ibu {{nama_ortu}},\n\nAnanda *{{nama_siswa}}* (NIS: {{nis}}) telah *HADIR* di sekolah dan mengikuti KBM pada hari {{tanggal}} pukul {{waktu}}.',
         wa_template_izin_sakit: saved.wa_template_izin_sakit || 'Pemberitahuan Presensi:\nYth. Bpk/Ibu {{nama_ortu}},\n\nLaporan presensi ananda *{{nama_siswa}}* berstatus *{{status}}* pada {{tanggal}} telah dicatat oleh pihak sekolah.\nKeterangan: {{keterangan}}.',
         wa_template_akun: saved.wa_template_akun || '*INFORMASI AKSES LOGIN SIAK PRESENSI SEKOLAH*\n\nYth. {{role_label}} *{{nama}}*,\n\nBerikut akun akses untuk masuk ke aplikasi Presensi Sekolah:\n🔗 *Tautan Aplikasi:* {{app_url}}\n👤 *ID Login ({{id_label}}):* {{id_login}}\n📧 *Email:* {{email}}\n🔑 *Password:* {{password}}\n\n_Catatan: Harap simpan informasi ini dan segera ubah kata sandi setelah Anda berhasil masuk._',
@@ -274,14 +342,13 @@ export default function AdminDashboard() {
         wa_gateway_api_url: 'https://api.fonnte.com/send',
         wa_gateway_api_key: 'SAMPLE_FONNTE_KEY_XYZ123',
         wa_template_alpa: 'Pemberitahuan Presensi:\nYth. Bpk/Ibu {{nama_ortu}},\n\nKami menginformasikan bahwa ananda *{{nama_siswa}}* (NIS: {{nis}}) tercatat *ALPA (Tanpa Keterangan)* pada hari {{tanggal}}.\n\nMohon konfirmasi jika ananda berhalangan hadir. Terima kasih.',
-        wa_template_terlambat: 'Pemberitahuan Presensi:\nYth. Bpk/Ibu {{nama_ortu}},\n\nAnanda *{{nama_siswa}}* tercatat *TERLAMBAT* hadir pada mata pelajaran {{mapel}} hari ini pukul {{waktu}}.',
         wa_template_hadir: 'Pemberitahuan Presensi:\nYth. Bpk/Ibu {{nama_ortu}},\n\nAnanda *{{nama_siswa}}* (NIS: {{nis}}) telah *HADIR* di sekolah dan mengikuti KBM pada hari {{tanggal}} pukul {{waktu}}.',
         wa_template_izin_sakit: 'Pemberitahuan Presensi:\nYth. Bpk/Ibu {{nama_ortu}},\n\nLaporan presensi ananda *{{nama_siswa}}* berstatus *{{status}}* pada {{tanggal}} telah dicatat oleh pihak sekolah.\nKeterangan: {{keterangan}}.',
         wa_template_akun: '*INFORMASI AKSES LOGIN SIAK PRESENSI SEKOLAH*\n\nYth. {{role_label}} *{{nama}}*,\n\nBerikut akun akses untuk masuk ke aplikasi Presensi Sekolah:\n🔗 *Tautan Aplikasi:* {{app_url}}\n👤 *ID Login ({{id_label}}):* {{id_login}}\n📧 *Email:* {{email}}\n🔑 *Password:* {{password}}\n\n_Catatan: Harap simpan informasi ini dan segera ubah kata sandi setelah Anda berhasil masuk._',
       };
     }
   });
-  const [activeWaTemplateTab, setActiveWaTemplateTab] = useState('alpa'); // 'alpa' | 'terlambat' | 'izin_sakit' | 'hadir' | 'akun'
+  const [activeWaTemplateTab, setActiveWaTemplateTab] = useState('alpa'); // 'alpa' | 'izin_sakit' | 'hadir' | 'akun'
   const [savingSettings, setSavingSettings] = useState(false);
 
   // State & Helper Penetapan Periode Akademik & Semester Aktif
@@ -615,7 +682,7 @@ export default function AdminDashboard() {
   async function handleLoadSampleSchedule() {
     const ok = await showConfirm({
       title: 'Muat Template Jadwal Lengkap?',
-      message: 'Apakah Anda ingin memuat template jadwal kurikulum lengkap untuk rombel X-IPA-1, XI-IPA-2, dan XII-IPA-1 (total 30 sesi KBM Senin-Jumat bebas bentrok)?',
+      message: 'Apakah Anda ingin memuat template jadwal kurikulum lengkap untuk kelas X-IPA-1, XI-IPA-2, dan XII-IPA-1 (total 30 sesi KBM Senin-Jumat bebas bentrok)?',
       type: 'info',
       confirmText: 'Muat Jadwal',
       cancelText: 'Batal',
@@ -1492,7 +1559,7 @@ export default function AdminDashboard() {
       };
 
       if (!payload.nama_kelas) {
-        toast.warning('Nama rombel kelas tidak boleh kosong!', 'Input Diperlukan');
+        toast.warning('Nama kelas tidak boleh kosong!', 'Input Diperlukan');
         return;
       }
 
@@ -1571,7 +1638,7 @@ export default function AdminDashboard() {
 
   async function handleDeleteKelas(id, nama) {
     const ok = await showConfirm({
-      title: 'Hapus Rombel Kelas?',
+      title: 'Hapus Kelas?',
       message: `Hapus kelas "${nama}"?\nSeluruh jadwal pelajaran pada kelas ini juga akan ikut terhapus.`,
       type: 'danger',
       confirmText: 'Ya, Hapus Kelas',
@@ -2081,16 +2148,16 @@ export default function AdminDashboard() {
   async function executePromotion() {
     const modeDesc =
       distributionMode === 'linear'
-        ? 'Paralel Linier (Rombel Padanan)'
+        ? 'Paralel Linier (Kelas Padanan)'
         : distributionMode === 'shuffle'
         ? 'Acak Otomatis (Merata)'
         : distributionMode === 'manual'
         ? 'Pilih Kelas Langsung (Plotting Saat Ini)'
-        : 'Kosongkan Rombel (Isi Nanti / Tunda)';
+        : 'Kosongkan Kelas (Isi Nanti / Tunda)';
 
     const ok = await showConfirm({
       title: 'Konfirmasi Eksekusi Promosi Kelas?',
-      message: `PERINGATAN AKADEMIK TAHUN AJARAN BARU:\n\nSistem akan memproses:\n• Kelulusan Siswa Kelas 9 (kecuali ${ungraduatedStudentNis.length} siswa mengulang)\n• Promosi Siswa Kelas 8 & 7 ke jenjang berikutnya (kecuali ${retainedStudentNis.length} siswa tinggal kelas)\n• Distribusi Rombel: Mode ${modeDesc}\n\nApakah Anda yakin ingin mengeksekusi sekarang? Tindakan ini akan memperbarui database siswa.`,
+      message: `PERINGATAN AKADEMIK TAHUN AJARAN BARU:\n\nSistem akan memproses:\n• Kelulusan Siswa Kelas 9 (kecuali ${ungraduatedStudentNis.length} siswa mengulang)\n• Promosi Siswa Kelas 8 & 7 ke jenjang berikutnya (kecuali ${retainedStudentNis.length} siswa tinggal kelas)\n• Distribusi Kelas: Mode ${modeDesc}\n\nApakah Anda yakin ingin mengeksekusi sekarang? Tindakan ini akan memperbarui database siswa.`,
       type: 'warning',
       confirmText: 'Eksekusi Sekarang',
       cancelText: 'Periksa Kembali',
@@ -2131,7 +2198,7 @@ export default function AdminDashboard() {
       let countNaik9 = 0;
       if (students8ToPromote.length > 0) {
         if (distributionMode === 'unassigned') {
-          // Opsi 4: Kosongkan rombel untuk isi nanti
+          // Opsi 4: Kosongkan kelas untuk isi nanti
           const nisList = students8ToPromote.map((s) => s.nis);
           const { error } = await supabase.from('siswa').update({ id_kelas: null }).in('nis', nisList);
           if (error) throw error;
@@ -2161,7 +2228,7 @@ export default function AdminDashboard() {
         } else if (distributionMode === 'shuffle') {
           // Opsi 2: Acak round-robin merata ke seluruh kelas 9
           if (kelas9.length === 0) {
-            throw new Error('Tidak ditemukan rombel Kelas 9 aktif sebagai kelas tujuan promosi.');
+            throw new Error('Tidak ditemukan Kelas 9 aktif sebagai kelas tujuan promosi.');
           }
           const shuffled = [...students8ToPromote].sort(() => Math.random() - 0.5);
           const targetMap = {};
@@ -2176,8 +2243,8 @@ export default function AdminDashboard() {
           }
           countNaik9 = students8ToPromote.length;
         } else {
-          // Opsi 1: Linier (Paralel rombel sama)
-          if (kelas9.length === 0) throw new Error('Tidak ditemukan rombel Kelas 9.');
+          // Opsi 1: Linier (Paralel kelas sama)
+          if (kelas9.length === 0) throw new Error('Tidak ditemukan Kelas 9.');
           for (const c8 of kelas8) {
             const targetClass = kelas9.find(
               (c9) => c9.nama_kelas.replace(/^[^\s-]+[-_ ]?/, '').trim().toLowerCase() ===
@@ -2204,7 +2271,7 @@ export default function AdminDashboard() {
       let countNaik8 = 0;
       if (students7ToPromote.length > 0) {
         if (distributionMode === 'unassigned') {
-          // Opsi 4: Kosongkan rombel untuk isi nanti
+          // Opsi 4: Kosongkan kelas untuk isi nanti
           const nisList = students7ToPromote.map((s) => s.nis);
           const { error } = await supabase.from('siswa').update({ id_kelas: null }).in('nis', nisList);
           if (error) throw error;
@@ -2234,7 +2301,7 @@ export default function AdminDashboard() {
         } else if (distributionMode === 'shuffle') {
           // Opsi 2: Acak round-robin merata ke seluruh kelas 8
           if (kelas8.length === 0) {
-            throw new Error('Tidak ditemukan rombel Kelas 8 aktif sebagai kelas tujuan promosi.');
+            throw new Error('Tidak ditemukan Kelas 8 aktif sebagai kelas tujuan promosi.');
           }
           const shuffled = [...students7ToPromote].sort(() => Math.random() - 0.5);
           const targetMap = {};
@@ -2249,8 +2316,8 @@ export default function AdminDashboard() {
           }
           countNaik8 = students7ToPromote.length;
         } else {
-          // Opsi 1: Linier (Paralel rombel sama)
-          if (kelas8.length === 0) throw new Error('Tidak ditemukan rombel Kelas 8.');
+          // Opsi 1: Linier (Paralel kelas sama)
+          if (kelas8.length === 0) throw new Error('Tidak ditemukan Kelas 8.');
           for (const c7 of kelas7) {
             const targetClass = kelas8.find(
               (c8) => c8.nama_kelas.replace(/^[^\s-]+[-_ ]?/, '').trim().toLowerCase() ===
@@ -2269,10 +2336,10 @@ export default function AdminDashboard() {
       }
 
       const modeNames = {
-        linear: 'Paralel Linier (Rombel Padanan)',
-        shuffle: 'Acak Otomatis (Pemerataan Rombel)',
+        linear: 'Paralel Linier (Kelas Padanan)',
+        shuffle: 'Acak Otomatis (Pemerataan Kelas)',
         manual: 'Plotting Interaktif (Pilih Kelas Sekarang)',
-        unassigned: 'Kosongkan Rombel (Isi Nanti / Tunda)',
+        unassigned: 'Kosongkan Kelas (Isi Nanti / Tunda)',
       };
 
       toast.success(
@@ -2292,7 +2359,7 @@ export default function AdminDashboard() {
   // Helper untuk menempatkan siswa antrean (unassigned) ke kelas pilihan secara massal
   async function handleAssignUnassignedStudents(targetClassId) {
     if (!targetClassId) {
-      toast.warning('Pilih rombel kelas tujuan terlebih dahulu!');
+      toast.warning('Pilih kelas tujuan terlebih dahulu!');
       return;
     }
     const targetNisList = selectedUnassignedNis.length > 0
@@ -2320,7 +2387,7 @@ export default function AdminDashboard() {
     }
   }
 
-  // Helper khusus Plotting / Penempatan Rombel Siswa (Terpisah dari Edit Siswa)
+  // Helper khusus Plotting / Penempatan Kelas Siswa (Terpisah dari Edit Siswa)
   function handleOpenPlottingModal(student) {
     setSelectedStudentForPlotting(student);
     setPlottingTargetKelas(student.id_kelas || '');
@@ -2340,16 +2407,16 @@ export default function AdminDashboard() {
         .eq('nis', selectedStudentForPlotting.nis);
       if (error) throw error;
 
-      const targetClassName = classes.find((c) => c.id_kelas === newClassId)?.nama_kelas || 'Antrean (Belum Ada Rombel)';
+      const targetClassName = classes.find((c) => c.id_kelas === newClassId)?.nama_kelas || 'Antrean (Belum Ada Kelas)';
       toast.success(
-        `Rombel untuk ${selectedStudentForPlotting.nama} berhasil diatur ke: ${targetClassName}!`,
-        'Penempatan Rombel Tersimpan'
-      );
+        `Kelas untuk ${selectedStudentForPlotting.nama} berhasil diatur ke: ${targetClassName}!`,
+        'Penempatan Kelas Tersimpan'
+              );
       setIsPlottingModalOpen(false);
       setSelectedStudentForPlotting(null);
       await fetchStudents();
     } catch (err) {
-      toast.error(`Gagal menyimpan rombel: ${err.message}`);
+      toast.error(`Gagal menyimpan kelas: ${err.message}`);
     } finally {
       setSavingPlotting(false);
     }
@@ -2375,7 +2442,7 @@ export default function AdminDashboard() {
         Nama_Siswa: item.siswa?.nama || '-',
         Kelas: item.siswa?.kelas?.nama_kelas || '-',
         Mata_Pelajaran: item.jadwal?.mata_pelajaran?.nama_mapel || 'Presensi Umum',
-        Status: item.status === 'H' || item.status === 'T' ? 'Hadir' : item.status === 'I' ? 'Izin' : item.status === 'S' ? 'Sakit' : 'Alpa',
+        Status: item.status === 'H' ? 'Hadir' : item.status === 'S' ? 'Sakit' : item.status === 'I' ? 'Izin' : 'Alpa',
         Keterangan: item.keterangan || '-',
         Metode: item.metode,
       }));
@@ -2423,7 +2490,7 @@ export default function AdminDashboard() {
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, `Siswa_${kelasObj?.nama_kelas || 'Rombel'}`);
+    XLSX.utils.book_append_sheet(wb, ws, `Siswa_${kelasObj?.nama_kelas || 'Kelas'}`);
     XLSX.writeFile(wb, `Data_Siswa_${kelasObj?.nama_kelas || 'Kelas'}.xlsx`);
   }
 
@@ -2432,7 +2499,7 @@ export default function AdminDashboard() {
     new Set(classes.map((c) => getTingkat(c)).filter(Boolean))
   ).sort((a, b) => a - b);
 
-  // Filter Siswa Terpisah per Tingkat & Rombel Kelas
+  // Filter Siswa Terpisah per Tingkat & Kelas
   const filteredStudents = students.filter((st) => {
     const matchSearch =
       st.nama.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -2452,7 +2519,7 @@ export default function AdminDashboard() {
     return matchSearch && matchTingkat && matchKelas && matchStatus;
   });
 
-  // Rombel Kelas yang aktif sesuai Tingkat yang dipilih (selalu terurut konsisten)
+  // Kelas yang aktif sesuai Tingkat yang dipilih (selalu terurut konsisten)
   const displayedClasses = sortClasses(
     (selectedTingkat === 'semua'
       ? classes
@@ -2495,13 +2562,14 @@ export default function AdminDashboard() {
       items: [
         { id: 'siswa', label: 'Data Siswa', icon: Users, color: 'text-amber-400', count: students.length },
         { id: 'guru', label: 'Data Guru', icon: GraduationCap, color: 'text-cyan-400', count: teachers.length },
-        { id: 'kelas', label: 'Rombel / Kelas', icon: Layers, color: 'text-purple-400', count: classes.length },
+        { id: 'kelas', label: 'Kelas', icon: Layers, color: 'text-purple-400', count: classes.length },
         { id: 'akun_ortu', label: 'Akun Orang Tua', icon: ShieldCheck, color: 'text-pink-400', badge: 'Opsional' },
       ],
     },
     {
       group: 'PEMBELAJARAN & KBM',
       items: [
+        { id: 'data_absensi', label: 'Kelola Data Absensi', icon: CheckSquare, color: 'text-sky-400', badge: 'Operasional' },
         { id: 'jadwal', label: 'Jadwal & Mata Pelajaran', icon: BookOpen, color: 'text-emerald-400', count: schedules.length },
         { id: 'kalender', label: 'Kalender Akademik & Libur', icon: Calendar, color: 'text-pink-400', badge: 'Baru' },
       ],
@@ -2510,6 +2578,7 @@ export default function AdminDashboard() {
       group: 'ADMINISTRASI & SISTEM',
       items: [
         { id: 'laporan', label: 'Rekap & Laporan Presensi', icon: Download, color: 'text-sky-400' },
+        { id: 'log_aktivitas', label: 'Log Aktivitas & Audit', icon: Activity, color: 'text-amber-400', badge: 'Audit Trail' },
         { id: 'gamifikasi', label: 'Hall of Fame & Badges', icon: Trophy, color: 'text-amber-400', badge: 'Prestasi' },
         { id: 'import', label: 'Import Massal Siswa', icon: FileSpreadsheet, color: 'text-emerald-400' },
         { id: 'promosi', label: 'Kenaikan Kelas Massal', icon: TrendingUp, color: 'text-amber-400' },
@@ -2685,25 +2754,25 @@ export default function AdminDashboard() {
       <div className="flex-1 min-w-0 flex flex-col">
         {/* Mobile Top Header (Hidden on Desktop) */}
         <header className="lg:hidden gradient-header text-white shadow-md sticky top-0 z-40 px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2.5 min-w-0 flex-1 pr-2">
             <button
               type="button"
               onClick={() => setSidebarOpen(true)}
-              className="p-2 rounded-xl bg-white/15 hover:bg-white/25 active:scale-95 border border-white/20 text-white cursor-pointer"
+              className="p-2 rounded-xl bg-white/15 hover:bg-white/25 active:scale-95 border border-white/20 text-white cursor-pointer shrink-0"
               title="Buka Menu Sidebar"
             >
               <Menu className="w-5 h-5" />
             </button>
-            <div>
-              <h2 className="text-xs font-black leading-tight">SMPN 2 KOTA BANGUN</h2>
+            <div className="min-w-0 flex-1">
+              <h2 className="text-xs font-black leading-tight truncate">SMPN 2 KOTA BANGUN</h2>
               <button
                 type="button"
                 onClick={handleOpenAcademicPeriodModal}
-                className="text-[10px] text-cyan-200 hover:text-white font-bold flex items-center gap-1 underline underline-offset-2 cursor-pointer mt-0.5"
+                className="text-[10px] text-cyan-200 hover:text-white font-bold flex items-center gap-1 underline underline-offset-2 cursor-pointer mt-0.5 max-w-full"
                 title="Ubah Tahun Ajaran / Semester"
               >
-                <span>T.A. {settings.tahun_ajaran_aktif || '2026/2027'} ({settings.semester_aktif || 'Ganjil'})</span>
-                <ChevronRight className="w-2.5 h-2.5" />
+                <span className="truncate">T.A. {settings.tahun_ajaran_aktif || '2026/2027'} ({settings.semester_aktif || 'Ganjil'})</span>
+                <ChevronRight className="w-2.5 h-2.5 shrink-0" />
               </button>
             </div>
           </div>
@@ -2829,7 +2898,7 @@ export default function AdminDashboard() {
             <div className="glass-card rounded-3xl p-5 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3 border border-slate-200">
               <div>
                 <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
-                  <Users className="w-5 h-5 text-blue-600" /> Data Siswa Terpisah per Tingkat & Rombel Kelas
+                  <Users className="w-5 h-5 text-blue-600" /> Data Siswa Terpisah per Tingkat & Kelas
                 </h2>
                 <p className="text-xs text-slate-500">
                   Data murid dipisahkan otomatis per jenjang tingkat dan kelas untuk mempermudah pemantauan, presensi, dan pengelolaan.
@@ -2940,7 +3009,7 @@ export default function AdminDashboard() {
                 })}
               </div>
 
-              {/* LEVEL 2: FILTER PILIH ROMBEL KELAS */}
+              {/* LEVEL 2: FILTER PILIH KELAS */}
               <div className="pt-2 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
                   <FolderOpen className="w-4 h-4 text-blue-600" /> 2. Pilih Rombongan Belajar (Kelas):
@@ -2972,7 +3041,7 @@ export default function AdminDashboard() {
                 </div>
               </div>
 
-              {/* Pills Rombel Kelas */}
+              {/* Pills Kelas */}
               <div className="flex flex-wrap items-center gap-1.5 pt-1">
                 <button
                   type="button"
@@ -2983,7 +3052,7 @@ export default function AdminDashboard() {
                       : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   }`}
                 >
-                  Semua Kelas ({displayedClasses.length} Rombel)
+                  Semua Kelas ({displayedClasses.length} Kelas)
                 </button>
 
                 {displayedClasses.map((c) => {
@@ -3012,7 +3081,7 @@ export default function AdminDashboard() {
                   );
                 })}
 
-                {/* Antrean Rombel Pill */}
+                {/* Antrean Kelas Pill */}
                 {(() => {
                   const unassignedCount = students.filter(
                     (s) => (!s.id_kelas || s.id_kelas === null) && s.status_siswa === 'aktif'
@@ -3044,7 +3113,7 @@ export default function AdminDashboard() {
             {/* ========================================================= */}
             {viewModeSiswa === 'per_kelas' ? (
               <div className="space-y-6">
-                {/* KARTU ANTREAN SISWA (BELUM DITEMPATKAN KE ROMBEL) */}
+                {/* KARTU ANTREAN SISWA (BELUM DITEMPATKAN KE KELAS) */}
                 {(() => {
                   const unassignedStudents = filteredStudents.filter(
                     (s) => (!s.id_kelas || s.id_kelas === null) && s.status_siswa === 'aktif'
@@ -3062,13 +3131,13 @@ export default function AdminDashboard() {
                           </div>
                           <div>
                             <div className="flex items-center gap-2">
-                              <h3 className="text-base font-black text-slate-800">Antrean Siswa (Belum Ada Rombel)</h3>
+                              <h3 className="text-base font-black text-slate-800">Antrean Siswa (Belum Ada Kelas)</h3>
                               <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold">
                                 {unassignedStudents.length} Siswa Perlu Diplot
                               </span>
                             </div>
                             <p className="text-xs text-slate-500">
-                              Siswa aktif hasil promosi mandiri atau siswa baru yang belum dimasukkan ke rombel kelas.
+                              Siswa aktif hasil promosi mandiri atau siswa baru yang belum dimasukkan ke kelas.
                             </p>
                           </div>
                         </div>
@@ -3080,7 +3149,7 @@ export default function AdminDashboard() {
                             onChange={(e) => setTargetClassForUnassigned(e.target.value)}
                             className="px-3 py-1.5 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-700"
                           >
-                            <option value="">-- Pilih Rombel Tujuan --</option>
+                            <option value="">-- Pilih Kelas Tujuan --</option>
                             {classes.map((c) => (
                               <option key={c.id_kelas} value={c.id_kelas}>
                                 {c.nama_kelas} (Tingkat {c.tingkat})
@@ -3094,14 +3163,14 @@ export default function AdminDashboard() {
                             className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
                           >
                             <TrendingUp className="w-3.5 h-3.5" />
-                            <span>Tempatkan Siswa ke Rombel</span>
+                            <span>Tempatkan Siswa ke Kelas</span>
                           </button>
                         </div>
                       </div>
 
                       {/* Tabel Siswa Antrean */}
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-left text-xs">
+                      <div className="overflow-x-auto pb-1">
+                        <table className="w-full min-w-[550px] text-left text-xs">
                           <thead className="bg-amber-100/60 text-amber-900 font-bold uppercase text-[10px]">
                             <tr>
                               <th className="p-2.5">Siswa</th>
@@ -3124,7 +3193,7 @@ export default function AdminDashboard() {
                                 <td className="p-2.5 font-mono text-slate-600">{st.nis}</td>
                                 <td className="p-2.5">
                                   <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
-                                    ⚠️ Belum Ada Rombel
+                                    ⚠️ Belum Ada Kelas
                                   </span>
                                 </td>
                                 <td className="p-2.5 text-right">
@@ -3134,7 +3203,7 @@ export default function AdminDashboard() {
                                     className="inline-flex items-center gap-1.5 px-3 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-semibold cursor-pointer shadow-sm transition-all"
                                   >
                                     <FolderInput size={13} />
-                                    Tentukan Rombel
+                                    Tentukan Kelas
                                   </button>
                                 </td>
                               </tr>
@@ -3223,8 +3292,8 @@ export default function AdminDashboard() {
                           </p>
                         </div>
                       ) : (
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-left text-xs">
+                        <div className="overflow-x-auto pb-1">
+                          <table className="w-full min-w-[700px] text-left text-xs">
                             <thead className="bg-slate-100 text-slate-600 uppercase font-bold">
                               <tr>
                                 <th className="p-3">Siswa</th>
@@ -3256,16 +3325,6 @@ export default function AdminDashboard() {
                                   </td>
                                   <td className="p-3 text-right">
                                     <div className="inline-flex items-center gap-1.5 relative">
-                                      <button
-                                        onClick={() => {
-                                          setSelectedStudentForPdf(st);
-                                          setIsPdfModalOpen(true);
-                                        }}
-                                        title="Cetak Rapor Rekap Presensi Siswa Resmi (PDF)"
-                                        className="p-1.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg transition-colors cursor-pointer"
-                                      >
-                                        <FileText className="w-3.5 h-3.5" />
-                                      </button>
                                       <button
                                         onClick={() => generateIdCard(st)}
                                         title="Cetak ID Card QR Fisik"
@@ -3336,7 +3395,7 @@ export default function AdminDashboard() {
                                                 className="w-full px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 flex items-center gap-2 cursor-pointer transition-colors"
                                               >
                                                 <FolderInput className="w-3.5 h-3.5 text-indigo-600" />
-                                                <span>Plotting / Pindah Rombel</span>
+                                                <span>Plotting / Pindah Kelas</span>
                                               </button>
 
                                               <div className="border-t border-slate-100 my-1" />
@@ -3373,13 +3432,13 @@ export default function AdminDashboard() {
               /* TAMPILAN 2: TABEL UTUH SEMUA SISWA                        */
               /* ========================================================= */
               <div className="glass-card rounded-3xl p-5 shadow-sm border border-slate-200 overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
+                <div className="overflow-x-auto pb-1">
+                  <table className="w-full min-w-[750px] text-left text-xs">
                     <thead className="bg-slate-100 text-slate-600 uppercase font-bold">
                       <tr>
                         <th className="p-3">Siswa</th>
                         <th className="p-3">NIS</th>
-                        <th className="p-3">Rombel Kelas</th>
+                        <th className="p-3">Kelas</th>
                         <th className="p-3">Tingkat</th>
                         <th className="p-3">Status</th>
                         <th className="p-3 text-right">Aksi & Anti-Joki</th>
@@ -3411,16 +3470,6 @@ export default function AdminDashboard() {
                           </td>
                           <td className="p-3 text-right">
                             <div className="inline-flex items-center gap-1.5 relative">
-                              <button
-                                onClick={() => {
-                                  setSelectedStudentForPdf(st);
-                                  setIsPdfModalOpen(true);
-                                }}
-                                title="Cetak Rapor Rekap Presensi Siswa Resmi (PDF)"
-                                className="p-1.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg transition-colors cursor-pointer"
-                              >
-                                <FileText className="w-3.5 h-3.5" />
-                              </button>
                               <button
                                 onClick={() => generateIdCard(st)}
                                 title="Cetak ID Card QR Fisik"
@@ -3491,7 +3540,7 @@ export default function AdminDashboard() {
                                         className="w-full px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 flex items-center gap-2 cursor-pointer transition-colors"
                                       >
                                         <FolderInput className="w-3.5 h-3.5 text-indigo-600" />
-                                        <span>Plotting / Pindah Rombel</span>
+                                        <span>Plotting / Pindah Kelas</span>
                                       </button>
 
                                       <div className="border-t border-slate-100 my-1" />
@@ -3591,7 +3640,7 @@ export default function AdminDashboard() {
                     <GraduationCap className="w-5 h-5 text-blue-600" /> Data Pendidik & Tenaga Kependidikan ({teachers.length})
                   </h2>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Kelola data NIP guru, mata pelajaran yang diampu, penetapan wali kelas rombel, serta jadwal KBM.
+                    Kelola data NIP guru, mata pelajaran yang diampu, penetapan wali kelas, serta jadwal KBM.
                   </p>
                 </div>
 
@@ -3646,7 +3695,7 @@ export default function AdminDashboard() {
                   <div>
                     <span className="text-[11px] font-semibold text-slate-500 block">Wali Kelas</span>
                     <span className="text-xl font-black text-emerald-700">{countWaliKelas}</span>
-                    <span className="text-[10px] text-slate-400 block">dari {classes.length} rombel</span>
+                    <span className="text-[10px] text-slate-400 block">dari {classes.length} kelas</span>
                   </div>
                 </div>
 
@@ -3824,8 +3873,8 @@ export default function AdminDashboard() {
                     </p>
                   </div>
                 ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs">
+                  <div className="overflow-x-auto pb-1">
+                    <table className="w-full min-w-[750px] text-left text-xs">
                       <thead className="bg-slate-100 text-slate-600 uppercase font-bold text-[11px]">
                         <tr>
                           <th className="p-3">Guru & Gelar</th>
@@ -3920,7 +3969,7 @@ export default function AdminDashboard() {
                                   {assignedClass ? (
                                     <span
                                       className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200"
-                                      title={`Wali Kelas untuk rombel ${assignedClass.nama_kelas}`}
+                                      title={`Wali Kelas untuk ${assignedClass.nama_kelas}`}
                                     >
                                       Wali Kelas: {assignedClass.nama_kelas}
                                     </span>
@@ -3960,7 +4009,7 @@ export default function AdminDashboard() {
                                   </button>
                                   {teachingList.length > 0 && (
                                     <span className="block text-[10px] text-slate-400 font-medium pl-1">
-                                      di {new Set(teachingList.map((j) => j.kelas?.nama_kelas || j.id_kelas)).size} Rombel
+                                      di {new Set(teachingList.map((j) => j.kelas?.nama_kelas || j.id_kelas)).size} Kelas
                                     </span>
                                   )}
                                 </div>
@@ -3976,6 +4025,19 @@ export default function AdminDashboard() {
                                     title="Lihat Jadwal Mengajar Guru"
                                   >
                                     <Clock className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedTeacherForSchedule(null);
+                                      setSelectedTeacherForSchedulePrint(t);
+                                      setSchedulePrintMode('single');
+                                      setSchedulePrintModalOpen(true);
+                                    }}
+                                    className="p-1.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg transition-colors cursor-pointer"
+                                    title="Buka Lembar Jadwal Guru Resmi (PDF & Excel)"
+                                  >
+                                    <Printer className="w-3.5 h-3.5" />
                                   </button>
                                   <button
                                     type="button"
@@ -4029,101 +4091,79 @@ export default function AdminDashboard() {
         })()}
 
         {/* ========================================================= */}
-        {/* TAB 3: KELAS & TINGKAT (CRUD & KALENDER PRESENSI)         */}
+        {/* ========================================================= */}
+        {/* TAB 3: KELAS & TINGKAT (WALI KELAS & MAPEL)       */}
         {/* ========================================================= */}
         {activeTab === 'kelas' && (
           <div className="space-y-4">
-            {selectedClassForCalendar ? (
-              <ClassAttendanceCalendar
-                classes={classes}
-                initialKelasId={selectedClassForCalendar.id_kelas}
-                allowEdit={true}
-                isAdmin={true}
-                onBack={() => setSelectedClassForCalendar(null)}
-                onManageSchedule={() => {
-                  setFormData({ id_kelas: selectedClassForCalendar.id_kelas });
-                  setModalType('add_jadwal');
-                }}
-              />
-            ) : (
-              <div className="space-y-4">
-                <div className="glass-card rounded-3xl p-5 shadow-sm flex items-center justify-between border border-slate-200">
-                  <div>
-                    <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
-                      <Layers className="w-5 h-5 text-blue-600" /> Data Rombongan Belajar / Kelas ({classes.length})
-                    </h2>
-                    <p className="text-xs text-slate-500">
-                      Kelola nama kelas, tingkat jenjang SMP (7 - 9), penetapan wali kelas, serta pantau kalender presensi & jadwal mapel per rombel.
-                    </p>
-                  </div>
+            {/* HEADER UTAMA KELAS */}
+            <div className="glass-card rounded-3xl p-5 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4 border border-slate-200">
+              <div>
+                <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
+                  <Layers className="w-5 h-5 text-blue-600" /> Data Rombongan Belajar / Kelas ({classes.length})
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Kelola data kelas, jenjang tingkat kelas VII–IX, penetapan wali kelas, serta wizard kenaikan kelas massal.
+                </p>
+              </div>
 
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('promosi')}
-                      className="px-3.5 py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
-                      title="Buka Wizard Kenaikan Kelas & Distribusi Rombel"
-                    >
-                      <TrendingUp className="w-4 h-4 text-amber-600" />
-                      <span>Kenaikan Kelas</span>
-                    </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('promosi')}
+                  className="px-3.5 py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
+                  title="Buka Wizard Kenaikan Kelas & Distribusi Kelas"
+                >
+                  <TrendingUp className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Kenaikan Kelas</span>
+                </button>
 
-                    <button
-                      type="button"
-                      onClick={() => setSelectedClassForCalendar({ id_kelas: 'all', nama_kelas: 'Semua Kelas' })}
-                      className="px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
-                      title="Buka kalender presensi & jadwal KBM gabungan seluruh kelas"
-                    >
-                      <Calendar className="w-4 h-4 text-indigo-600" />
-                      <span>Kalender Multi-Kelas & Mapel</span>
-                    </button>
+                <button
+                  onClick={() => {
+                    setFormData({
+                      tingkat: 7,
+                      jurusan: 'IPA',
+                      paralel: '1',
+                      nama_kelas: 'VII-IPA-1',
+                      wali_kelas: '',
+                    });
+                    setParalelFormat('angka');
+                    setCustomParalelInput('');
+                    setModalType('add_kelas');
+                  }}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Tambah Kelas
+                </button>
+              </div>
+            </div>
 
-                    <button
-                      onClick={() => {
-                        setFormData({
-                          tingkat: 7,
-                          jurusan: 'IPA',
-                          rombel: '1',
-                          nama_kelas: 'VII-IPA-1',
-                          wali_kelas: '',
-                        });
-                        setRombelFormat('angka');
-                        setCustomRombelInput('');
-                        setModalType('add_kelas');
-                      }}
-                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
-                    >
-                      <Plus className="w-4 h-4" /> Tambah Kelas
-                    </button>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   {classes.map((c) => {
                     const curTingkat = c.tingkat || 7;
                     const curJurusan = c.jurusan || (c.nama_kelas?.toUpperCase().includes('IPS') ? 'IPS' : 'IPA');
                     const parts = (c.nama_kelas || '').split('-');
-                    const curRombel = parts.length > 2 ? parts[2] : (parts.length === 2 ? parts[1] : '1');
+                    const curParalel = parts.length > 2 ? parts[2] : (parts.length === 2 ? parts[1] : '1');
 
                     const handleOpenEdit = () => {
-                      const isLetter = /^[A-Za-z]$/.test(curRombel);
-                      setRombelFormat(isLetter ? 'huruf' : 'angka');
-                      setCustomRombelInput('');
-                      if (!isLetter && Number(curRombel) > 5) {
-                        const max = Number(curRombel);
+                      const isLetter = /^[A-Za-z]$/.test(curParalel);
+                      setParalelFormat(isLetter ? 'huruf' : 'angka');
+                      setCustomParalelInput('');
+                      if (!isLetter && Number(curParalel) > 5) {
+                        const max = Number(curParalel);
                         const newNums = Array.from({ length: max }, (_, i) => (i + 1).toString());
-                        setRombelNumbers(newNums);
-                      } else if (isLetter && curRombel.toUpperCase().charCodeAt(0) > 69) {
-                        const count = curRombel.toUpperCase().charCodeAt(0) - 64;
+                        setParalelNumbers(newNums);
+                      } else if (isLetter && curParalel.toUpperCase().charCodeAt(0) > 69) {
+                        const count = curParalel.toUpperCase().charCodeAt(0) - 64;
                         const newLetters = Array.from({ length: Math.min(26, count) }, (_, i) => String.fromCharCode(65 + i));
-                        setRombelLetters(newLetters);
+                        setParalelLetters(newLetters);
                       }
                       setFormData({
                         id_kelas: c.id_kelas,
                         nama_kelas: c.nama_kelas,
                         tingkat: curTingkat,
                         jurusan: curJurusan,
-                        rombel: curRombel,
+                        paralel: curParalel,
                         wali_kelas: c.wali_kelas || '',
                       });
                       setModalType('add_kelas');
@@ -4150,7 +4190,7 @@ export default function AdminDashboard() {
                               type="button"
                               onClick={handleOpenEdit}
                               className="text-slate-400 hover:text-blue-600 p-1 rounded-lg cursor-pointer transition-colors"
-                              title="Edit Rombel & Wali Kelas"
+                              title="Edit Kelas & Wali Kelas"
                             >
                               <Edit2 className="w-4 h-4" />
                             </button>
@@ -4190,25 +4230,6 @@ export default function AdminDashboard() {
                       <div className="pt-2 border-t border-slate-100 space-y-2">
                         <button
                           type="button"
-                          onClick={() => setSelectedClassForCalendar(c)}
-                          className="w-full py-2 px-3 bg-blue-50 hover:bg-blue-600 hover:text-white text-blue-700 rounded-xl text-xs font-bold flex items-center justify-center gap-2 border border-blue-200 hover:border-blue-600 transition-all cursor-pointer shadow-xs"
-                        >
-                          <Calendar className="w-3.5 h-3.5" />
-                          <span>Lihat Kalender Presensi & Mapel</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => setSelectedClassForReport(c)}
-                          className="w-full py-2 px-3 bg-emerald-50 hover:bg-emerald-600 hover:text-white text-emerald-700 rounded-xl text-xs font-bold flex items-center justify-center gap-2 border border-emerald-200 hover:border-emerald-600 transition-all cursor-pointer shadow-xs"
-                          title="Buka laporan rekap kehadiran bulanan & semesteran rombel ini"
-                        >
-                          <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600 group-hover:text-white" />
-                          <span>Rekap Presensi (Excel & PDF)</span>
-                        </button>
-
-                        <button
-                          type="button"
                           onClick={() => {
                             setSelectedKelasForJadwal(c.id_kelas);
                             setJadwalSubTab('kelas');
@@ -4217,22 +4238,20 @@ export default function AdminDashboard() {
                           className="w-full py-2 px-3 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-xl text-xs font-bold flex items-center justify-center gap-2 border border-slate-200 transition-all cursor-pointer shadow-2xs"
                         >
                           <BookOpen className="w-3.5 h-3.5 text-blue-600" />
-                          <span>Atur Jadwal KBM Rombel</span>
+                          <span>Atur Jadwal KBM Kelas</span>
                         </button>
 
                         <div className="flex items-center justify-between text-[11px] text-slate-400 px-1">
                           <span>ID: {c.id_kelas.slice(0, 8)}...</span>
-                          <span className="text-slate-500 font-medium">Klik untuk buka kalender / jadwal</span>
+                          <span className="text-slate-500 font-medium">Data Kelas Aktif</span>
                         </div>
                       </div>
                     </div>
                   );
                 })}
               </div>
-              </div>
-            )}
-          </div>
-        )}
+            </div>
+          )}
 
         {/* ========================================================= */}
         {/* TAB 4: JADWAL & MAPEL (CRUD)                              */}
@@ -4242,9 +4261,12 @@ export default function AdminDashboard() {
         {/* ========================================================= */}
         {activeTab === 'jadwal' && (() => {
           const currentClassId = selectedKelasForJadwal || (classes.length > 0 ? classes[0].id_kelas : '');
-          const currentClass = classes.find((c) => c.id_kelas === currentClassId);
-          const currentTeacherNip = selectedGuruForJadwal || (teachers.length > 0 ? teachers[0].nip : '');
-          const currentTeacher = teachers.find((t) => t.nip === currentTeacherNip);
+          const currentClass = classes.find((c) => String(c.id_kelas) === String(currentClassId)) || (classes.length > 0 ? classes[0] : null);
+          const currentTeacher =
+            teachers.find((t) => String(t.nip || t.id_guru || '').trim() === String(selectedGuruForJadwal || '').trim()) ||
+            teachers.find((t) => (t.nama || '').toLowerCase().trim() === String(selectedGuruForJadwal || '').toLowerCase().trim()) ||
+            (teachers.length > 0 ? teachers[0] : null);
+          const currentTeacherNip = currentTeacher ? (currentTeacher.nip || currentTeacher.id_guru || '') : '';
 
           const daysList = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
 
@@ -4257,7 +4279,7 @@ export default function AdminDashboard() {
                     <BookOpen className="w-5 h-5 text-blue-600" /> Pusat Jadwal Pelajaran & Kurikulum KBM
                   </h2>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Kelola jadwal mingguan per rombel kelas, pantau beban mengajar guru, dan kelola mata pelajaran dengan deteksi bentrok otomatis.
+                    Kelola jadwal mingguan per kelas, pantau beban mengajar guru, dan kelola mata pelajaran dengan deteksi bentrok otomatis.
                   </p>
                 </div>
 
@@ -4266,7 +4288,7 @@ export default function AdminDashboard() {
                     type="button"
                     onClick={handleLoadSampleSchedule}
                     className="px-3.5 py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
-                    title="Muat 30 sesi jadwal KBM kurikulum lengkap (Senin-Jumat) untuk semua rombel kelas"
+                    title="Muat 30 sesi jadwal KBM kurikulum lengkap (Senin-Jumat) untuk semua kelas"
                   >
                     <RefreshCw className="w-4 h-4 text-emerald-600" /> Muat Template Jadwal Lengkap
                   </button>
@@ -4311,6 +4333,19 @@ export default function AdminDashboard() {
 
                   <button
                     type="button"
+                    onClick={() => setJadwalSubTab('distribusi')}
+                    className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
+                      jadwalSubTab === 'distribusi'
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    <Calendar className="w-3.5 h-3.5" />
+                    <span>3. Distribusi Harian KBM</span>
+                  </button>
+
+                  <button
+                    type="button"
                     onClick={() => setJadwalSubTab('mapel')}
                     className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
                       jadwalSubTab === 'mapel'
@@ -4319,7 +4354,7 @@ export default function AdminDashboard() {
                     }`}
                   >
                     <BookOpen className="w-3.5 h-3.5" />
-                    <span>3. Bank Mata Pelajaran ({subjects.length})</span>
+                    <span>4. Bank Mata Pelajaran ({subjects.length})</span>
                   </button>
 
                   <button
@@ -4332,7 +4367,7 @@ export default function AdminDashboard() {
                     }`}
                   >
                     <ListFilter className="w-3.5 h-3.5" />
-                    <span>4. Semua Jadwal ({schedules.length})</span>
+                    <span>5. Semua Jadwal ({schedules.length})</span>
                   </button>
                 </div>
 
@@ -4346,15 +4381,31 @@ export default function AdminDashboard() {
               {/* ========================================================= */}
               {jadwalSubTab === 'kelas' && (
                 <div className="space-y-4">
-                  {/* Selector Rombel Kelas */}
+                  {/* Selector Kelas */}
                   <div className="glass-card rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-3">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
-                      <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                        <FolderOpen className="w-4 h-4 text-blue-600" /> Pilih Rombongan Belajar / Kelas:
-                      </span>
-                      <span className="text-[11px] text-slate-400">
-                        Klik rombel untuk melihat dan menyusun jadwal mingguan kelas tersebut.
-                      </span>
+                      <div>
+                        <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                          <FolderOpen className="w-4 h-4 text-blue-600" /> Pilih Rombongan Belajar / Kelas:
+                        </span>
+                        <span className="text-[11px] text-slate-400 block mt-0.5">
+                          Klik kelas untuk melihat dan menyusun jadwal mingguan kelas tersebut.
+                        </span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedClassForSchedulePrint(null);
+                          setClassSchedulePrintMode('all_classes');
+                          setClassSchedulePrintModalOpen(true);
+                        }}
+                        className="px-3 py-1.5 bg-slate-100 hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 border border-slate-200 hover:border-emerald-200 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer self-start sm:self-auto"
+                        title="Buka dialog cetak jadwal untuk seluruh kelas"
+                      >
+                        <Printer className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>Cetak Seluruh Kelas</span>
+                      </button>
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2">
@@ -4402,7 +4453,21 @@ export default function AdminDashboard() {
                         </p>
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedClassForSchedulePrint(currentClass);
+                            setClassSchedulePrintMode('single_class');
+                            setClassSchedulePrintModalOpen(true);
+                          }}
+                          className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
+                          title={`Cetak Lembar Resmi Jadwal Pelajaran Kelas ${currentClass.nama_kelas} (PDF, Tab Baru, HTML, & Excel)`}
+                        >
+                          <Printer className="w-3.5 h-3.5" />
+                          <span>Cetak Jadwal Kelas</span>
+                        </button>
+
                         <button
                           type="button"
                           onClick={() => {
@@ -4555,12 +4620,42 @@ export default function AdminDashboard() {
                   {/* Selector Guru */}
                   <div className="glass-card rounded-2xl p-4 border border-slate-200 shadow-2xs space-y-3">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
-                      <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                        <GraduationCap className="w-4 h-4 text-blue-600" /> Pilih Guru Pengampu:
-                      </span>
-                      <span className="text-[11px] text-slate-400">
-                        Pantau seluruh jadwal mengajar guru dalam sepekan & periksa bentrok waktu.
-                      </span>
+                      <div>
+                        <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                          <GraduationCap className="w-4 h-4 text-blue-600" /> Pilih Guru Pengampu:
+                        </span>
+                        <span className="text-[11px] text-slate-400">
+                          Pantau seluruh jadwal mengajar guru dalam sepekan & periksa bentrok waktu.
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedTeacherForSchedulePrint(null);
+                            setSchedulePrintMode('all_individual');
+                            setSchedulePrintModalOpen(true);
+                          }}
+                          className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold flex items-center gap-1.5 border border-indigo-200 transition-all cursor-pointer shadow-2xs"
+                          title="Cetak lembar jadwal untuk seluruh guru sekaligus (1 lembar per guru dengan auto page-break)"
+                        >
+                          <Users className="w-3.5 h-3.5" />
+                          <span>Cetak Massal Seluruh Guru</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedTeacherForSchedulePrint(null);
+                            setSchedulePrintMode('master_matrix');
+                            setSchedulePrintModalOpen(true);
+                          }}
+                          className="px-3 py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-xl text-xs font-bold flex items-center gap-1.5 border border-purple-200 transition-all cursor-pointer shadow-2xs"
+                          title="Cetak Master Matriks Rekapitulasi Jadwal Seluruh Guru (A4 Landscape & Excel)"
+                        >
+                          <Grid className="w-3.5 h-3.5" />
+                          <span>Master Matriks</span>
+                        </button>
+                      </div>
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2">
@@ -4633,16 +4728,31 @@ export default function AdminDashboard() {
                           </div>
                         </div>
 
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setFormData({ id_guru: currentTeacher.nip });
-                            setModalType('add_jadwal');
-                          }}
-                          className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer shrink-0"
-                        >
-                          <Plus className="w-3.5 h-3.5" /> Tambah Jadwal Guru Ini
-                        </button>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedTeacherForSchedulePrint(currentTeacher);
+                              setSchedulePrintMode('single');
+                              setSchedulePrintModalOpen(true);
+                            }}
+                            className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
+                            title="Cetak Lembar Jadwal Resmi Guru Ini (PDF & Excel)"
+                          >
+                            <Printer className="w-3.5 h-3.5" />
+                            <span>Cetak Jadwal Guru</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setFormData({ id_guru: currentTeacher.nip });
+                              setModalType('add_jadwal');
+                            }}
+                            className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
+                          >
+                            <Plus className="w-3.5 h-3.5" /> Tambah Jadwal
+                          </button>
+                        </div>
                       </div>
                     );
                   })()}
@@ -4729,7 +4839,180 @@ export default function AdminDashboard() {
               )}
 
               {/* ========================================================= */}
-              {/* SUB-TAB 3: BANK MATA PELAJARAN                            */}
+              {/* SUB-TAB 3: DISTRIBUSI HARIAN KBM (MAPEL & GURU PENGAJAR)   */}
+              {/* ========================================================= */}
+              {jadwalSubTab === 'distribusi' && (
+                <div className="glass-card rounded-3xl p-5 shadow-sm border border-slate-200 space-y-4">
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-2xl">
+                        <GraduationCap className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                          <span>Daftar Mata Pelajaran & Guru Pengajar</span>
+                          <span className="text-[11px] px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200/60 font-semibold">
+                            Hari {kbmDaySchedule}
+                          </span>
+                        </h3>
+                        <p className="text-[11px] text-slate-500">
+                          Distribusi mata pelajaran yang diajarkan guru pengampu di setiap kelas pada hari {kbmDaySchedule}.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Filter Hari, Filter Kelas & Aksi */}
+                    <div className="flex flex-wrap items-center gap-2">
+                      {/* Selector Hari KBM */}
+                      <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl overflow-x-auto no-scrollbar">
+                        {['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'].map((h) => (
+                          <button
+                            key={h}
+                            type="button"
+                            onClick={() => setKbmDaySchedule(h)}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                              kbmDaySchedule === h
+                                ? 'bg-indigo-600 text-white shadow-xs'
+                                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+                            }`}
+                          >
+                            {h}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Filter Kelas */}
+                      <select
+                        value={kbmClassFilter}
+                        onChange={(e) => setKbmClassFilter(e.target.value)}
+                        className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                      >
+                        <option value="all">Semua Kelas ({classes.length})</option>
+                        {classes.map((cls) => (
+                          <option key={cls.id_kelas} value={cls.id_kelas}>
+                            Kelas {cls.nama_kelas}
+                          </option>
+                        ))}
+                      </select>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFormData({});
+                          setModalType('add_jadwal');
+                        }}
+                        className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Tambah Sesi KBM</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Grid Sesi KBM per Kelas pada Hari Terpilih */}
+                  {(() => {
+                    const daySchedules = schedules.filter(
+                      (s) => (s.hari || '').toLowerCase() === kbmDaySchedule.toLowerCase()
+                    );
+                    const displayClasses = kbmClassFilter === 'all'
+                      ? classes
+                      : classes.filter((c) => c.id_kelas === kbmClassFilter);
+
+                    if (daySchedules.length === 0) {
+                      return (
+                        <div className="py-8 text-center text-xs text-slate-400 bg-slate-50/60 rounded-2xl border border-dashed border-slate-200">
+                          Tidak ada sesi mata pelajaran terjadwal pada hari {kbmDaySchedule}.
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                        {displayClasses.map((cls) => {
+                          const classScheds = daySchedules
+                            .filter((s) => s.id_kelas === cls.id_kelas)
+                            .sort((a, b) => (a.jam_mulai || '').localeCompare(b.jam_mulai || ''));
+
+                          return (
+                            <div
+                              key={cls.id_kelas}
+                              className="p-4 rounded-2xl bg-indigo-50/30 border border-indigo-100 space-y-2.5 flex flex-col justify-between hover:bg-indigo-50/50 transition-colors"
+                            >
+                              <div>
+                                <div className="flex items-center justify-between border-b border-indigo-100/70 pb-2 mb-2">
+                                  <div className="flex items-center gap-2">
+                                    <span className="w-2.5 h-2.5 rounded-full bg-indigo-600" />
+                                    <h4 className="text-xs font-black text-slate-800">
+                                      Kelas {cls.nama_kelas}
+                                    </h4>
+                                  </div>
+                                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-white text-indigo-700 border border-indigo-200 shadow-2xs">
+                                    {classScheds.length} Sesi KBM
+                                  </span>
+                                </div>
+
+                                {classScheds.length === 0 ? (
+                                  <p className="text-[11px] text-slate-400 italic py-2">
+                                    Tidak ada jadwal mata pelajaran di hari {kbmDaySchedule}.
+                                  </p>
+                                ) : (
+                                  <div className="space-y-1.5">
+                                    {classScheds.map((sch) => {
+                                      const teacherObj = sch.guru || teachers.find((t) => t.nip === sch.id_guru);
+                                      const subjectName = sch.mata_pelajaran?.nama_mapel || sch.nama_mapel || 'Mata Pelajaran';
+
+                                      return (
+                                        <div
+                                          key={sch.id_jadwal}
+                                          className="bg-white p-2.5 rounded-xl border border-indigo-100 shadow-2xs hover:border-indigo-300 transition-all space-y-1"
+                                        >
+                                          <div className="flex items-center justify-between gap-1">
+                                            <span className="text-xs font-bold text-slate-800 truncate" title={subjectName}>
+                                              📚 {subjectName}
+                                            </span>
+                                            <span className="font-mono text-[10px] text-slate-400 shrink-0">
+                                              {sch.jam_mulai?.slice(0, 5)} - {sch.jam_selesai?.slice(0, 5)}
+                                            </span>
+                                          </div>
+                                          <div className="flex items-center justify-between text-[11px] text-slate-500">
+                                            <span className="text-indigo-700 font-medium truncate">
+                                              👨‍🏫 {teacherObj?.nama || 'Guru Pengampu'}
+                                            </span>
+                                            {sch.batas_waktu_terlambat && (
+                                              <span className="text-[9px] text-amber-600 bg-amber-50 px-1.5 py-0.2 rounded border border-amber-200">
+                                                Toleransi {sch.batas_waktu_terlambat.slice(0, 5)}
+                                              </span>
+                                            )}
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedKelasForJadwal(cls.id_kelas);
+                                  setJadwalSubTab('kelas');
+                                }}
+                                className="w-full mt-2 py-1.5 px-2 bg-white hover:bg-indigo-600 hover:text-white text-indigo-700 text-[11px] font-bold rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1 border border-indigo-200 hover:border-indigo-600 shadow-2xs"
+                              >
+                                <BookOpen className="w-3 h-3" />
+                                <span>Atur Jadwal Kelas Ini</span>
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+
+              {/* ========================================================= */}
+              {/* SUB-TAB 4: BANK MATA PELAJARAN                            */}
               {/* ========================================================= */}
               {jadwalSubTab === 'mapel' && (
                 <div className="glass-card rounded-3xl p-5 shadow-sm border border-slate-200 space-y-4">
@@ -4743,7 +5026,7 @@ export default function AdminDashboard() {
                           Bank Mata Pelajaran Resmi ({subjects.length})
                         </h3>
                         <p className="text-[11px] text-slate-400">
-                          Mata pelajaran yang aktif diajarkan oleh guru dan dijadwalkan di setiap rombel kelas.
+                          Mata pelajaran yang aktif diajarkan oleh guru dan dijadwalkan di setiap kelas.
                         </p>
                       </div>
                     </div>
@@ -4873,7 +5156,7 @@ export default function AdminDashboard() {
               )}
 
               {/* ========================================================= */}
-              {/* SUB-TAB 4: TABEL GLOBAL SEMUA JADWAL                      */}
+              {/* SUB-TAB 5: TABEL GLOBAL SEMUA JADWAL                      */}
               {/* ========================================================= */}
               {jadwalSubTab === 'semua' && (
                 <div className="glass-card rounded-3xl p-5 shadow-sm border border-slate-200 space-y-4">
@@ -4883,11 +5166,25 @@ export default function AdminDashboard() {
                         Tabel Rekapitulasi Seluruh Jadwal KBM ({schedules.length})
                       </h3>
                       <p className="text-[11px] text-slate-400">
-                        Daftar lengkap seluruh jadwal KBM di semua jenjang rombel kelas dan guru pengampu.
+                        Daftar lengkap seluruh jadwal KBM di semua jenjang kelas dan guru pengampu.
                       </p>
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedTeacherForSchedulePrint(null);
+                          setSchedulePrintMode('master_matrix');
+                          setSchedulePrintModalOpen(true);
+                        }}
+                        className="h-9 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
+                        title="Cetak Master Matriks Jadwal Seluruh Guru (A4 Landscape & Excel)"
+                      >
+                        <Printer className="w-3.5 h-3.5" />
+                        <span>Cetak Master Jadwal</span>
+                      </button>
+
                       <select
                         value={filterJadwalHari}
                         onChange={(e) => setFilterJadwalHari(e.target.value)}
@@ -4912,12 +5209,12 @@ export default function AdminDashboard() {
                     </div>
                   </div>
 
-                  <div className="overflow-x-auto rounded-2xl border border-slate-100">
-                    <table className="w-full text-left text-xs">
+                  <div className="overflow-x-auto rounded-2xl border border-slate-100 pb-1">
+                    <table className="w-full min-w-[750px] text-left text-xs">
                       <thead className="bg-slate-100 text-slate-600 uppercase font-bold text-[11px]">
                         <tr>
                           <th className="p-3">Hari & Jam KBM</th>
-                          <th className="p-3">Rombel Kelas</th>
+                          <th className="p-3">Kelas</th>
                           <th className="p-3">Mata Pelajaran</th>
                           <th className="p-3">Guru Pengajar</th>
                           <th className="p-3">Batas Terlambat</th>
@@ -5042,7 +5339,7 @@ export default function AdminDashboard() {
         {/* TAB 6: KENAIKAN KELAS & KELULUSAN (PROMOSI MASSAL)        */}
         {/* ========================================================= */}
         {/* ========================================================= */}
-        {/* TAB 6: WIZARD KENAIKAN KELAS & DISTRIBUSI ROMBEL (3 OPSI) */}
+        {/* TAB 6: WIZARD KENAIKAN KELAS & DISTRIBUSI KELAS (3 OPSI) */}
         {/* ========================================================= */}
         {activeTab === 'promosi' && (() => {
           const activePromoStudents = students.filter((s) => s.status_siswa === 'aktif');
@@ -5099,7 +5396,7 @@ export default function AdminDashboard() {
                   </div>
                   <div>
                     <h2 className="text-lg font-black text-slate-800">
-                      Wizard Kenaikan Kelas & Distribusi Rombel Baru
+                      Wizard Kenaikan Kelas & Distribusi Kelas Baru
                     </h2>
                     <p className="text-xs text-slate-500">
                       Sistem Promosi Siswa SMP (Tingkat 7 ➔ 8 ➔ 9 ➔ Alumni) dengan opsi Siswa Tinggal Kelas & Distribusi Kelas
@@ -5145,7 +5442,7 @@ export default function AdminDashboard() {
                   <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black ${
                     promotionStep === 2 ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-700'
                   }`}>2</span>
-                  <span>2. Opsi Distribusi Rombel</span>
+                  <span>2. Opsi Distribusi Kelas</span>
                 </button>
 
                 <button
@@ -5260,13 +5557,13 @@ export default function AdminDashboard() {
                   </div>
 
                   {/* Student Checklist Table */}
-                  <div className="border border-slate-200 rounded-2xl overflow-hidden max-h-[420px] overflow-y-auto">
-                    <table className="w-full text-left text-xs">
+                  <div className="border border-slate-200 rounded-2xl overflow-x-auto max-h-[420px] overflow-y-auto pb-1">
+                    <table className="w-full min-w-[650px] text-left text-xs">
                       <thead className="bg-slate-100 text-slate-600 uppercase font-bold sticky top-0 z-10">
                         <tr>
                           <th className="p-3">Siswa</th>
                           <th className="p-3">NIS</th>
-                          <th className="p-3">Rombel Saat Ini</th>
+                          <th className="p-3">Kelas Saat Ini</th>
                           <th className="p-3">Status Rencana Promosi</th>
                           <th className="p-3 text-right">Tandai Pengecualian</th>
                         </tr>
@@ -5369,7 +5666,7 @@ export default function AdminDashboard() {
               )}
 
               {/* ========================================================= */}
-              {/* STEP 2: PILIH METODE DISTRIBUSI ROMBEL (4 PILIHAN)        */}
+              {/* STEP 2: PILIH METODE DISTRIBUSI KELAS (4 PILIHAN)        */}
               {/* ========================================================= */}
               {promotionStep === 2 && (() => {
                 const studentsToPromoteList = activePromoStudents.filter((st) => {
@@ -5385,10 +5682,10 @@ export default function AdminDashboard() {
                   <div className="space-y-5">
                     <div>
                       <h3 className="text-sm font-bold text-slate-800">
-                        Pilih Strategi Penempatan / Distribusi Rombel Siswa yang Naik Kelas
+                        Pilih Strategi Penempatan / Distribusi Kelas Siswa yang Naik Kelas
                       </h3>
                       <p className="text-xs text-slate-500">
-                        Tentukan bagaimana siswa yang naik ke Tingkat 8 dan 9 akan didistribusikan ke rombel baru.
+                        Tentukan bagaimana siswa yang naik ke Tingkat 8 dan 9 akan didistribusikan ke kelas baru.
                       </p>
                     </div>
 
@@ -5413,13 +5710,13 @@ export default function AdminDashboard() {
                               Linier
                             </span>
                           </div>
-                          <h4 className="text-xs font-black text-slate-800">1. Paralel Rombel Sama</h4>
+                          <h4 className="text-xs font-black text-slate-800">1. Paralel Kelas Sama</h4>
                           <p className="text-[11px] text-slate-500 leading-relaxed">
-                            Siswa langsung naik ke rombel padanan (contoh: <strong>VII-A ➔ VIII-A</strong>, <strong>VIII-A ➔ IX-A</strong>). Komposisi teman sekelas tetap.
+                            Siswa langsung naik ke kelas padanan (contoh: <strong>VII-A ➔ VIII-A</strong>, <strong>VIII-A ➔ IX-A</strong>). Komposisi teman sekelas tetap.
                           </p>
                         </div>
                         <div className="text-[10px] text-blue-700 font-semibold pt-1 border-t border-slate-100">
-                          ✓ Rombel tetap sama
+                          ✓ Kelas tetap sama
                         </div>
                       </div>
 
@@ -5449,7 +5746,7 @@ export default function AdminDashboard() {
                           </p>
                         </div>
                         <div className="text-[10px] text-amber-700 font-semibold pt-1 border-t border-slate-100">
-                          ✓ Kapasitas rombel adil
+                          ✓ Kapasitas kelas adil
                         </div>
                       </div>
 
@@ -5473,7 +5770,7 @@ export default function AdminDashboard() {
                               Pilih Sekarang
                             </span>
                           </div>
-                          <h4 className="text-xs font-black text-slate-800">3. Pilih Rombel Sekarang</h4>
+                          <h4 className="text-xs font-black text-slate-800">3. Pilih Kelas Sekarang</h4>
                           <p className="text-[11px] text-slate-500 leading-relaxed">
                             Pilih langsung kelas baru untuk tiap siswa di tabel bawahnya, atau biarkan opsi <strong>Isi Nanti</strong> jika belum pasti.
                           </p>
@@ -5505,7 +5802,7 @@ export default function AdminDashboard() {
                           </div>
                           <h4 className="text-xs font-black text-slate-800">4. Kosongkan & Isi Nanti</h4>
                           <p className="text-[11px] text-slate-500 leading-relaxed">
-                            Siswa dinaikkan jenjangnya, namun rombel dikosongkan. Rombel baru diisi nanti via <strong>Studio Penempatan Rombel</strong>.
+                            Siswa dinaikkan jenjangnya, namun kelas dikosongkan. Kelas baru diisi nanti via <strong>Studio Penempatan Kelas</strong>.
                           </p>
                         </div>
                         <div className="text-[10px] text-purple-700 font-semibold pt-1 border-t border-slate-100">
@@ -5523,7 +5820,7 @@ export default function AdminDashboard() {
                               <FolderInput className="w-4 h-4 text-emerald-700" /> Plotting Interaktif Kelas Baru Siswa ({studentsToPromoteList.length} Siswa Naik):
                             </span>
                             <p className="text-[11px] text-emerald-800">
-                              Tentukan rombel baru di dropdown masing-masing siswa. Siswa yang belum dipilih rombelnya akan otomatis berstatus <strong>Isi Nanti / Tunda</strong>.
+                              Tentukan kelas baru di dropdown masing-masing siswa. Siswa yang belum dipilih kelasnya akan otomatis berstatus <strong>Isi Nanti / Tunda</strong>.
                             </p>
                           </div>
 
@@ -5541,13 +5838,13 @@ export default function AdminDashboard() {
                           </div>
                         </div>
 
-                        <div className="border border-emerald-200 rounded-xl overflow-hidden max-h-[350px] overflow-y-auto bg-white">
-                          <table className="w-full text-left text-xs">
+                        <div className="border border-emerald-200 rounded-xl overflow-x-auto max-h-[350px] overflow-y-auto bg-white pb-1">
+                          <table className="w-full min-w-[520px] text-left text-xs">
                             <thead className="bg-emerald-100/70 text-emerald-900 uppercase font-bold sticky top-0 z-10 text-[10px]">
                               <tr>
                                 <th className="p-2.5">Siswa</th>
                                 <th className="p-2.5">Jenjang Asal ➔ Target</th>
-                                <th className="p-2.5">Pilih Rombel Baru</th>
+                                <th className="p-2.5">Pilih Kelas Baru</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-emerald-100">
@@ -5673,33 +5970,33 @@ export default function AdminDashboard() {
                   {/* Strategy Info Card */}
                   <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-slate-700">Strategi Distribusi Rombel Terpilih:</span>
+                      <span className="text-xs font-bold text-slate-700">Strategi Distribusi Kelas Terpilih:</span>
                       <span className="px-2.5 py-0.5 rounded-full text-xs font-black bg-blue-100 text-blue-700">
                         {distributionMode === 'linear'
-                          ? '1. Paralel Rombel Sama (Linier)'
+                          ? '1. Paralel Kelas Sama (Linier)'
                           : distributionMode === 'shuffle'
                           ? '2. Acak Otomatis (Merata / Round-Robin)'
                           : distributionMode === 'manual'
                           ? '3. Plotting Interaktif (Pilih Kelas Sekarang)'
-                          : '4. Kosongkan Rombel (Isi Nanti / Tunda)'}
+                          : '4. Kosongkan Kelas (Isi Nanti / Tunda)'}
                       </span>
                     </div>
 
                     {distributionMode === 'manual' && (
                       <p className="text-[11px] text-slate-600 leading-relaxed">
-                        Sebanyak <strong>{Object.keys(manualPlacements).filter((k) => manualPlacements[k]).length} siswa</strong> langsung ditempatkan ke kelas pilihan Anda, dan <strong>{previewNaik8 + previewNaik9 - Object.keys(manualPlacements).filter((k) => manualPlacements[k]).length} siswa</strong> berstatus <em>Isi Nanti (Antrean)</em> yang dapat Anda tentukan rombelnya kapan saja via Studio Penempatan Rombel.
+                        Sebanyak <strong>{Object.keys(manualPlacements).filter((k) => manualPlacements[k]).length} siswa</strong> langsung ditempatkan ke kelas pilihan Anda, dan <strong>{previewNaik8 + previewNaik9 - Object.keys(manualPlacements).filter((k) => manualPlacements[k]).length} siswa</strong> berstatus <em>Isi Nanti (Antrean)</em> yang dapat Anda tentukan kelasnya kapan saja via Studio Penempatan Kelas.
                       </p>
                     )}
 
                     {distributionMode === 'shuffle' && (
                       <p className="text-[11px] text-slate-600 leading-relaxed">
-                        Siswa tingkat 7 dan 8 yang naik akan disebar secara acak dan berimbang ke {classes.filter((c) => getTingkat(c) === 8).length} rombel kelas 8 dan {classes.filter((c) => getTingkat(c) === 9).length} rombel kelas 9 yang aktif.
+                        Siswa tingkat 7 dan 8 yang naik akan disebar secara acak dan berimbang ke {classes.filter((c) => getTingkat(c) === 8).length} kelas 8 dan {classes.filter((c) => getTingkat(c) === 9).length} kelas 9 yang aktif.
                       </p>
                     )}
 
                     {distributionMode === 'unassigned' && (
                       <p className="text-[11px] text-slate-600 leading-relaxed">
-                        Seluruh siswa yang naik kelas akan masuk ke antrean <em>Isi Nanti / Belum Ada Rombel</em>. Di Tab Data Siswa, Anda dapat menempatkan siswa secara kelompok ke rombel pilihan menggunakan fitur <strong>Studio Penempatan Rombel</strong>.
+                        Seluruh siswa yang naik kelas akan masuk ke antrean <em>Isi Nanti / Belum Ada Kelas</em>. Di Tab Data Siswa, Anda dapat menempatkan siswa secara kelompok ke kelas pilihan menggunakan fitur <strong>Studio Penempatan Kelas</strong>.
                       </p>
                     )}
                   </div>
@@ -5763,6 +6060,34 @@ export default function AdminDashboard() {
         })()}
 
         {/* ========================================================= */}
+        {/* TAB KHUSUS: KELOLA DATA ABSENSI (CRUD & OPERASIONAL)      */}
+        {/* ========================================================= */}
+        {activeTab === 'data_absensi' && (
+          <AdminAttendanceManager
+            students={students}
+            classes={classes}
+            teachers={teachers}
+            subjects={subjects}
+            schedules={schedules}
+            settings={settings}
+            initialView={attendanceManagerView}
+            initialClassId={attendanceManagerClassId}
+            onOpenStudentPdfReport={(student) => {
+              setSelectedStudentForPdf(student);
+              setIsPdfModalOpen(true);
+            }}
+            onOpenClassReport={(kelas) => {
+              setSelectedClassForReport(kelas);
+            }}
+            onManageSchedule={(clsId) => {
+              setSelectedKelasForJadwal(clsId);
+              setJadwalSubTab('kelas');
+              setActiveTab('jadwal');
+            }}
+          />
+        )}
+
+        {/* ========================================================= */}
         {/* TAB 7: PUSAT REKAPITULASI & LAPORAN PRESENSI EKSEKUTIF    */}
         {/* ========================================================= */}
         {activeTab === 'laporan' && (
@@ -5778,6 +6103,11 @@ export default function AdminDashboard() {
             onOpenStudentPdf={(student) => {
               setSelectedStudentForPdf(student);
               setIsPdfModalOpen(true);
+            }}
+            onOpenTeacherSchedule={(teacher, mode = 'single') => {
+              setSelectedTeacherForSchedulePrint(teacher);
+              setSchedulePrintMode(mode);
+              setSchedulePrintModalOpen(true);
             }}
           />
         )}
@@ -5797,14 +6127,6 @@ export default function AdminDashboard() {
               title: 'Format Pesan Saat Siswa Alpa (Tanpa Keterangan)',
               desc: 'Pesan otomatis dikirim ke nomor WhatsApp orang tua ketika siswa terdata Alpa pada KBM hari tersebut.',
               vars: ['{{nama_ortu}}', '{{nama_siswa}}', '{{nis}}', '{{tanggal}}'],
-            },
-            {
-              id: 'terlambat',
-              label: '🟡 Notifikasi Terlambat',
-              settingKey: 'wa_template_terlambat',
-              title: 'Format Pesan Saat Siswa Terlambat Masuk Jam Pelajaran',
-              desc: 'Pesan otomatis dikirim jika siswa hadir melewati jam batas toleransi sesi KBM.',
-              vars: ['{{nama_ortu}}', '{{nama_siswa}}', '{{mapel}}', '{{waktu}}', '{{tanggal}}'],
             },
             {
               id: 'izin_sakit',
@@ -5867,7 +6189,6 @@ export default function AdminDashboard() {
           function resetWaTemplateToDefault(tabKey) {
             const defaults = {
               alpa: 'Pemberitahuan Presensi:\nYth. Bpk/Ibu {{nama_ortu}},\n\nKami menginformasikan bahwa ananda *{{nama_siswa}}* (NIS: {{nis}}) tercatat *ALPA (Tanpa Keterangan)* pada hari {{tanggal}}.\n\nMohon konfirmasi jika ananda berhalangan hadir. Terima kasih.',
-              terlambat: 'Pemberitahuan Presensi:\nYth. Bpk/Ibu {{nama_ortu}},\n\nAnanda *{{nama_siswa}}* tercatat *TERLAMBAT* hadir pada mata pelajaran {{mapel}} hari ini pukul {{waktu}}.',
               hadir: 'Pemberitahuan Presensi:\nYth. Bpk/Ibu {{nama_ortu}},\n\nAnanda *{{nama_siswa}}* (NIS: {{nis}}) telah *HADIR* di sekolah dan mengikuti KBM pada hari {{tanggal}} pukul {{waktu}}.',
               izin_sakit: 'Pemberitahuan Presensi:\nYth. Bpk/Ibu {{nama_ortu}},\n\nLaporan presensi ananda *{{nama_siswa}}* berstatus *{{status}}* pada {{tanggal}} telah dicatat oleh pihak sekolah.\nKeterangan: {{keterangan}}.',
               akun: '*INFORMASI AKSES LOGIN SIAK PRESENSI SEKOLAH*\n\nYth. {{role_label}} *{{nama}}*,\n\nBerikut akun akses untuk masuk ke aplikasi Presensi Sekolah:\n🔗 *Tautan Aplikasi:* {{app_url}}\n👤 *ID Login ({{id_label}}):* {{id_login}}\n📧 *Email:* {{email}}\n🔑 *Password:* {{password}}\n\n_Catatan: Harap simpan informasi ini dan segera ubah kata sandi setelah Anda berhasil masuk._',
@@ -5875,7 +6196,6 @@ export default function AdminDashboard() {
 
             const keyMap = {
               alpa: 'wa_template_alpa',
-              terlambat: 'wa_template_terlambat',
               hadir: 'wa_template_hadir',
               izin_sakit: 'wa_template_izin_sakit',
               akun: 'wa_template_akun',
@@ -6787,8 +7107,8 @@ export default function AdminDashboard() {
                     </div>
                   </div>
 
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs border-collapse">
+                  <div className="overflow-x-auto pb-1">
+                    <table className="w-full min-w-[680px] text-left text-xs border-collapse">
                       <thead>
                         <tr className="border-b border-slate-200 text-slate-400 text-[10px] font-black uppercase">
                           <th className="py-2.5 px-3">Tanggal</th>
@@ -6928,7 +7248,7 @@ export default function AdminDashboard() {
                     style={{ color: '#e2e8f0' }}
                     className="text-xs sm:text-sm font-medium mt-1 max-w-xl leading-relaxed"
                   >
-                    Evaluasi komparasi kedisiplinan antar tingkat kelas 7, 8, dan 9, pantau pencapaian misi kalender, serta terbitkan piagam penghargaan resmi sekolah.
+                    Evaluasi komparasi kedisiplinan antar tingkat kelas 7, 8, dan 9 serta pantau pencapaian misi kalender sekolah.
                   </p>
                 </div>
               </div>
@@ -6955,7 +7275,6 @@ export default function AdminDashboard() {
                 {[
                   { id: 'hall_of_fame', label: '🥇 Hall of Fame & Klasemen', icon: Trophy },
                   { id: 'misi_sekolah', label: '🎯 Katalog & Monitoring Misi', icon: Sparkles },
-                  { id: 'piagam', label: '📜 Cetak Piagam Siswa Teladan', icon: Award },
                 ].map((st) => {
                   const Icon = st.icon;
                   const active = gamifikasiSubTab === st.id;
@@ -6996,7 +7315,7 @@ export default function AdminDashboard() {
                   onChange={(e) => setGamifikasiFilterKelas(e.target.value)}
                   className="bg-white border-2 border-slate-300 text-slate-800 font-bold text-xs rounded-xl px-2.5 py-1.5 focus:outline-none focus:border-blue-500 cursor-pointer shadow-2xs"
                 >
-                  <option value="all">Semua Rombel</option>
+                  <option value="all">Semua Kelas</option>
                   {classes.map((c) => (
                     <option key={c.id_kelas} value={c.id_kelas}>
                       Kelas {c.nama_kelas}
@@ -7008,199 +7327,594 @@ export default function AdminDashboard() {
 
             {/* SUB-TAB 1: HALL OF FAME & KLASEMEN SEKOLAH */}
             {gamifikasiSubTab === 'hall_of_fame' && (
-              <div className="space-y-5">
-                {/* 3 Top Card Podium Kehormatan */}
-                {(() => {
-                  const sorted = [...students]
-                    .filter((s) => {
-                      if (gamifikasiFilterKelas !== 'all' && String(s.id_kelas) !== String(gamifikasiFilterKelas)) return false;
-                      if (gamifikasiFilterTingkat !== 'all') {
-                        const t = getTingkat(s.kelas);
-                        if (String(t) !== String(gamifikasiFilterTingkat)) return false;
-                      }
-                      return true;
-                    })
-                    .sort((a, b) => (b.streak_sekarang || 0) - (a.streak_sekarang || 0));
+              <div className="space-y-6">
+                {/* Secondary Controls Bar: Kategori Leaderboard & Periode Waktu */}
+                <div className="p-4 rounded-3xl bg-white border-2 border-slate-200 shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                  {/* Category Switcher */}
+                  <div className="flex flex-wrap items-center gap-1.5 p-1 bg-slate-100 rounded-2xl border border-slate-200">
+                    {[
+                      { id: 'streak', label: '🔥 Streak Kehadiran Siswa', icon: Flame, desc: 'Rekor konsistensi siswa individu' },
+                      { id: 'kelas', label: '🏆 Kelas Terdisiplin (% Hadir)', icon: Trophy, desc: 'Peringkat persentase kehadiran kelas' },
+                      { id: 'tingkat', label: '📊 Komparasi Angkatan (7, 8, 9)', icon: TrendingUp, desc: 'Perbandingan kedisiplinan jenjang' },
+                    ].map((cat) => {
+                      const Icon = cat.icon;
+                      const active = hallOfFameCategory === cat.id;
+                      return (
+                        <button
+                          key={cat.id}
+                          type="button"
+                          onClick={() => setHallOfFameCategory(cat.id)}
+                          className={`px-3.5 py-2 rounded-xl text-xs font-black flex items-center gap-2 transition-all cursor-pointer ${
+                            active
+                              ? 'bg-amber-400 text-slate-950 shadow-sm ring-2 ring-amber-400/40'
+                              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70'
+                          }`}
+                        >
+                          <Icon className={`w-4 h-4 ${active ? 'text-slate-950' : 'text-slate-500'}`} />
+                          <span>{cat.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
 
-                  const top1 = sorted[0];
-                  const top2 = sorted[1];
-                  const top3 = sorted[2];
+                  {/* Filter Periode Waktu (Pekan Ini, Bulan Ini, Semester) */}
+                  <div className="flex items-center gap-2 self-start lg:self-auto flex-wrap">
+                    <span className="text-[11px] font-extrabold uppercase text-slate-500 flex items-center gap-1">
+                      <Calendar className="w-3.5 h-3.5 text-blue-600" />
+                      Periode:
+                    </span>
+                    <div className="inline-flex bg-slate-100 p-1 rounded-xl text-xs font-bold gap-1 border border-slate-200">
+                      {[
+                        { id: 'week', label: '📅 Pekan Ini' },
+                        { id: 'month', label: '📆 Bulan Ini' },
+                        { id: 'semester', label: '🏛️ Semester Ini' },
+                      ].map((p) => {
+                        const active = hallOfFamePeriod === p.id;
+                        return (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => setHallOfFamePeriod(p.id)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
+                              active
+                                ? 'bg-blue-600 text-white shadow-xs'
+                                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                            }`}
+                          >
+                            {p.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                {/* ========================================================= */}
+                {/* 1. KATEGORI: STREAK KEHADIRAN SISWA INDIVIDU              */}
+                {/* ========================================================= */}
+                {hallOfFameCategory === 'streak' && (() => {
+                  const getPeriodStreak = (s) => {
+                    const curr = Number(s.streak_sekarang) || 0;
+                    const maxS = Number(s.streak_tertinggi || s.streak_sekarang) || 0;
+                    if (hallOfFamePeriod === 'week') return Math.min(5, curr);
+                    if (hallOfFamePeriod === 'semester') return maxS;
+                    return curr;
+                  };
+
+                  const targetClass = classes.find((c) => String(c.id_kelas) === String(gamifikasiFilterKelas));
+                  const filteredStudents = [...students].filter((s) => {
+                    if (gamifikasiFilterKelas !== 'all') {
+                      const sClassId = String(s.id_kelas || s.kelas?.id_kelas || '');
+                      const sClassName = String(s.kelas?.nama_kelas || '').trim().toUpperCase();
+                      const directMatch = sClassId === String(gamifikasiFilterKelas);
+                      const nameMatch = targetClass && sClassName === String(targetClass.nama_kelas || '').trim().toUpperCase();
+                      const idMatch = targetClass && sClassId === String(targetClass.nama_kelas || '').trim().toUpperCase();
+                      if (!directMatch && !nameMatch && !idMatch) return false;
+                    }
+                    if (gamifikasiFilterTingkat !== 'all') {
+                      const t = getTingkat(s.kelas);
+                      if (String(t) !== String(gamifikasiFilterTingkat)) return false;
+                    }
+                    return true;
+                  });
+
+                  const sortedStudents = sortAndRankStudentsByStreak(filteredStudents, getPeriodStreak);
+
+                  const top1 = sortedStudents[0];
+                  const top2 = sortedStudents[1];
+                  const top3 = sortedStudents[2];
+
+                  const renderAdminStudentPodiumCard = (st, defaultOrder) => {
+                    if (!st) return null;
+                    const streakVal = getPeriodStreak(st);
+                    const isRank1 = st.rank === 1;
+                    const isRank2 = st.rank === 2;
+                    const isRank3 = st.rank === 3;
+
+                    let bgClass = '';
+                    let badgeClass = '';
+                    let titleLabel = '';
+
+                    if (isRank1) {
+                      bgClass = 'border-3 border-amber-400 bg-gradient-to-b from-amber-50 to-white shadow-xl relative md:-translate-y-3 hover:border-amber-500 ring-4 ring-amber-400/20';
+                      badgeClass = 'bg-amber-400 text-slate-950 ring-4 ring-amber-300/50';
+                      titleLabel = st.isShared ? '🤝 Juara 1 Bersama' : 'Teladan Utama Sekolah';
+                    } else if (isRank2) {
+                      bgClass = 'border-2 border-slate-300 bg-white shadow-md hover:border-slate-400 hover:shadow-lg ring-4 ring-slate-200/40';
+                      badgeClass = 'bg-slate-700 text-white ring-4 ring-slate-200';
+                      titleLabel = st.isShared ? '🤝 Juara 2 Bersama' : 'Juara 2 Teladan';
+                    } else {
+                      bgClass = 'border-2 border-amber-700/40 bg-white shadow-md hover:border-amber-700 hover:shadow-lg ring-4 ring-amber-700/10';
+                      badgeClass = 'bg-amber-800 text-white ring-4 ring-amber-100';
+                      titleLabel = st.isShared ? '🤝 Juara 3 Bersama' : 'Juara 3 Teladan';
+                    }
+
+                    return (
+                      <div className={`rounded-3xl p-6 sm:p-7 text-center space-y-3.5 transition-all relative ${bgClass} ${defaultOrder}`}>
+                        <div className="absolute -top-3 left-1/2 -translate-x-1/2 whitespace-nowrap">
+                          <span className={`px-4 py-1 rounded-full font-black text-[11px] uppercase tracking-wider inline-flex items-center gap-1 shadow-md ${
+                            isRank1 ? 'bg-amber-400 text-slate-950' : isRank2 ? 'bg-slate-700 text-white' : 'bg-amber-800 text-white'
+                          }`}>
+                            {isRank1 ? <Crown className="w-3.5 h-3.5 fill-current" /> : <Award className="w-3.5 h-3.5" />}
+                            <span>{titleLabel}</span>
+                          </span>
+                        </div>
+                        <span className={`w-14 h-14 sm:w-16 sm:h-16 rounded-full font-black text-xl sm:text-2xl mx-auto flex items-center justify-center shadow-lg mt-2 ${badgeClass}`}>
+                          {st.medalEmoji || (isRank1 ? '🥇 1' : isRank2 ? '🥈 2' : '🥉 3')}
+                        </span>
+                        <div className="space-y-0.5">
+                          <h4 className="font-black text-lg text-slate-950 truncate">{st.nama}</h4>
+                          <p className="text-xs font-bold text-slate-600">Kelas {st.kelas?.nama_kelas || '-'}</p>
+                          <p className="text-[10px] text-slate-400 font-mono">NIS: {st.nis}</p>
+                        </div>
+                        <div className={`inline-flex items-center gap-2 px-5 py-2 rounded-full font-black text-xs border shadow-xs ${
+                          isRank1 ? 'bg-amber-100 text-amber-950 border-amber-300' : 'bg-slate-100 text-slate-800 border-slate-300'
+                        }`}>
+                          <Flame className={`w-4 h-4 ${isRank1 ? 'fill-amber-600 text-amber-600' : 'fill-orange-500 text-orange-500'}`} />
+                          <span>{streakVal} Hari Tanpa Alpa</span>
+                        </div>
+                      </div>
+                    );
+                  };
 
                   return (
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      {/* Juara 2 (Perak / Silver) */}
-                      {top2 && (
-                        <div className="rounded-3xl p-6 border-2 border-slate-300 bg-white text-center space-y-3 shadow-md hover:border-slate-400 transition-all">
-                          <span className="w-10 h-10 rounded-full bg-slate-700 text-white font-black text-sm mx-auto flex items-center justify-center shadow-xs">
-                            🥈 2
+                    <div className="space-y-6">
+                      {/* Banner Info Kategori */}
+                      <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-300 text-amber-950 flex items-center justify-between gap-3 text-xs">
+                        <div className="flex items-center gap-2">
+                          <Crown className="w-5 h-5 text-amber-600 shrink-0" />
+                          <span>
+                            <strong>Klasemen Siswa:</strong> Menampilkan rekor kehadiran berturut-turut tanpa jeda alpa untuk periode <strong>{hallOfFamePeriod === 'week' ? 'Pekan Ini (Maks. 5 Hari Sekolah)' : hallOfFamePeriod === 'semester' ? 'Akumulasi Rekor Semester' : 'Bulan Berjalan'}</strong>.
                           </span>
-                          <h4 className="font-black text-base text-slate-900 truncate">{top2.nama}</h4>
-                          <p className="text-xs font-bold text-slate-600">Kelas {top2.kelas?.nama_kelas || '-'}</p>
-                          <div className="inline-flex items-center gap-1.5 px-3.5 py-1 bg-slate-100 border border-slate-300 rounded-full font-black text-xs text-slate-800 shadow-2xs">
-                            <Flame className="w-3.5 h-3.5 fill-orange-500 text-orange-500" />
-                            <span>{top2.streak_sekarang || 0} Hari Streak</span>
-                          </div>
                         </div>
-                      )}
+                        <span className="font-mono font-bold text-amber-800 shrink-0">
+                          {sortedStudents.length} Siswa Terdaftar
+                        </span>
+                      </div>
 
-                      {/* Juara 1 (Emas / Gold - Podium Tertinggi) */}
-                      {top1 && (
-                        <div className="rounded-3xl p-6 border-2 border-amber-400 bg-amber-50/40 text-center space-y-3 shadow-md relative md:-translate-y-2 hover:border-amber-500 transition-all">
-                          <span className="px-3.5 py-1 rounded-full bg-amber-400 text-slate-950 font-black text-[11px] uppercase tracking-wider inline-block shadow-xs">
-                            ⭐ Teladan Sekolah Utama
-                          </span>
-                          <span className="w-12 h-12 rounded-full bg-amber-400 text-slate-950 font-black text-2xl mx-auto flex items-center justify-center shadow-xs">
-                            🥇 1
-                          </span>
-                          <h4 className="font-black text-lg text-slate-950 truncate">{top1.nama}</h4>
-                          <p className="text-xs font-black text-blue-700">Kelas {top1.kelas?.nama_kelas || '-'}</p>
-                          <div className="inline-flex items-center gap-1.5 px-4 py-1.5 bg-white text-amber-950 rounded-full font-black text-xs border border-amber-300 shadow-xs">
-                            <Flame className="w-4 h-4 fill-amber-600 text-amber-600" />
-                            <span>{top1.streak_sekarang || 0} Hari Masuk Beruntun</span>
-                          </div>
-                        </div>
-                      )}
+                      {/* 3 Top Card Podium Kehormatan Siswa (Mewah & Kontras) */}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+                        {top2 && renderAdminStudentPodiumCard(top2, 'order-2 md:order-1')}
+                        {top1 && renderAdminStudentPodiumCard(top1, 'order-1 md:order-2')}
+                        {top3 && renderAdminStudentPodiumCard(top3, 'order-3 md:order-3')}
+                      </div>
 
-                      {/* Juara 3 (Perunggu / Bronze) */}
-                      {top3 && (
-                        <div className="rounded-3xl p-6 border-2 border-amber-700/50 bg-white text-center space-y-3 shadow-md hover:border-amber-700 transition-all">
-                          <span className="w-10 h-10 rounded-full bg-amber-800 text-white font-black text-sm mx-auto flex items-center justify-center shadow-xs">
-                            🥉 3
+                      {/* Tabel Lengkap Top Siswa Terdisiplin */}
+                      <div className="rounded-3xl p-6 shadow-sm border border-slate-200 bg-white space-y-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <h3 className="text-sm font-black text-slate-800 flex items-center gap-2">
+                            <Trophy className="w-4 h-4 text-amber-500" />
+                            Klasemen Lengkap Siswa Terdisiplin
+                          </h3>
+                          <span className="text-xs text-slate-500">
+                            Menampilkan siswa dengan akumulasi rekor kehadiran tertinggi
                           </span>
-                          <h4 className="font-black text-base text-slate-900 truncate">{top3.nama}</h4>
-                          <p className="text-xs font-bold text-slate-600">Kelas {top3.kelas?.nama_kelas || '-'}</p>
-                          <div className="inline-flex items-center gap-1.5 px-3.5 py-1 bg-amber-50 border border-amber-300 rounded-full font-black text-xs text-amber-950 shadow-2xs">
-                            <Flame className="w-3.5 h-3.5 fill-orange-500 text-orange-500" />
-                            <span>{top3.streak_sekarang || 0} Hari Streak</span>
-                          </div>
                         </div>
-                      )}
+
+                        <div className="overflow-x-auto pb-1">
+                          <table className="w-full min-w-[700px] text-left text-xs">
+                            <thead>
+                              <tr className="border-b border-slate-200 bg-slate-50 text-slate-600 font-bold uppercase tracking-wider text-[10px]">
+                                <th className="py-3 px-3 text-center">Rank</th>
+                                <th className="py-3 px-3">Nama Siswa</th>
+                                <th className="py-3 px-3">NIS</th>
+                                <th className="py-3 px-3">Kelas</th>
+                                <th className="py-3 px-3">Streak Kehadiran</th>
+                                <th className="py-3 px-3">Level & XP</th>
+                                <th className="py-3 px-3 text-center">Aksi Administrator</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {sortedStudents.length === 0 ? (
+                                <tr>
+                                  <td colSpan={7} className="py-8 text-center text-slate-400 italic">
+                                    Tidak ada data siswa yang cocok dengan filter yang dipilih.
+                                  </td>
+                                </tr>
+                              ) : (
+                                sortedStudents.slice(0, 50).map((st) => {
+                                  const summ = calculateStudentAchievementsSummary(st, {
+                                    tahunAjaran: settings.tahun_ajaran_aktif,
+                                    semesterAktif: settings.semester_aktif,
+                                  });
+                                  const streakVal = getPeriodStreak(st);
+
+                                  return (
+                                    <tr key={st.nis} className="hover:bg-slate-50/80 transition-colors">
+                                      <td className="py-3 px-3 text-center">
+                                        <span
+                                          className={`w-7 h-7 rounded-xl text-xs font-black inline-flex items-center justify-center shadow-2xs ${
+                                            st.rank === 1
+                                              ? 'bg-amber-400 text-slate-950 font-black ring-2 ring-amber-400/30'
+                                              : st.rank === 2
+                                              ? 'bg-slate-300 text-slate-900 font-black border border-slate-400'
+                                              : st.rank === 3
+                                              ? 'bg-amber-800 text-white font-black'
+                                              : 'bg-slate-100 text-slate-700 font-bold border border-slate-200'
+                                          }`}
+                                        >
+                                          {st.rank}
+                                        </span>
+                                      </td>
+                                      <td className="py-3 px-3 font-extrabold text-slate-900">
+                                        <div className="flex items-center gap-1.5">
+                                          <span>{st.nama}</span>
+                                          {st.isShared && (
+                                            <span className="px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 text-[10px] font-black border border-amber-200">
+                                              = Seri
+                                            </span>
+                                          )}
+                                        </div>
+                                      </td>
+                                      <td className="py-3 px-3 font-mono font-bold text-slate-600">{st.nis}</td>
+                                      <td className="py-3 px-3 font-bold text-blue-700">
+                                        Kelas {st.kelas?.nama_kelas || '-'}
+                                      </td>
+                                      <td className="py-3 px-3">
+                                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-orange-100 text-orange-800 border border-orange-300 shadow-2xs">
+                                          <Flame className="w-3.5 h-3.5 fill-orange-500 text-orange-500" />
+                                          <span>{streakVal} Hari</span>
+                                        </span>
+                                      </td>
+                                      <td className="py-3 px-3">
+                                        <div className="flex items-center gap-2">
+                                          <span className="px-2 py-0.5 rounded-md bg-indigo-100 text-indigo-900 font-black text-[10px] border border-indigo-200 shadow-2xs">
+                                            Lvl {summ.level}
+                                          </span>
+                                          <span className="font-mono text-slate-800 font-black text-xs">{summ.totalXp.toLocaleString()} XP</span>
+                                        </div>
+                                      </td>
+                                      <td className="py-3 px-3 text-center">
+                                        <div className="flex items-center justify-center gap-1.5">
+                                          <button
+                                            type="button"
+                                            onClick={() => setSelectedStudentForAchievement(st)}
+                                            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1 shadow-xs"
+                                          >
+                                            <Trophy className="w-3.5 h-3.5" />
+                                            <span>Detail Badges</span>
+                                          </button>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  );
+                                })
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
                     </div>
                   );
                 })()}
 
-                {/* Tabel Lengkap Top Siswa Terdisiplin */}
-                <div className="rounded-3xl p-6 shadow-sm border border-slate-200 bg-white space-y-4">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-black text-slate-800 flex items-center gap-2">
-                      <Trophy className="w-4 h-4 text-amber-500" />
-                      Klasemen Peringkat Siswa Terdisiplin
-                    </h3>
-                    <span className="text-xs text-slate-500">
-                      Menampilkan siswa dengan akumulasi rekor kehadiran tertinggi
-                    </span>
-                  </div>
+                {/* ========================================================= */}
+                {/* 2. KATEGORI: KELAS TERDISIPLIN (% KEHADIRAN TERTINGGI)     */}
+                {/* ========================================================= */}
+                {hallOfFameCategory === 'kelas' && (() => {
+                  const classLeaderboard = calculateClassDisciplineLeaderboard(classes, students, holidays, {
+                    tahunAjaran: settings.tahun_ajaran_aktif,
+                    semester: settings.semester_aktif,
+                  });
 
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs">
-                      <thead>
-                        <tr className="border-b border-slate-200 bg-slate-50 text-slate-600 font-bold uppercase tracking-wider text-[10px]">
-                          <th className="py-3 px-3 text-center">Rank</th>
-                          <th className="py-3 px-3">Nama Siswa</th>
-                          <th className="py-3 px-3">NIS</th>
-                          <th className="py-3 px-3">Rombel Kelas</th>
-                          <th className="py-3 px-3">Streak Kehadiran</th>
-                          <th className="py-3 px-3">Level & XP</th>
-                          <th className="py-3 px-3 text-center">Aksi Administrator</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {(() => {
-                          const list = [...students]
-                            .filter((s) => {
-                              if (gamifikasiFilterKelas !== 'all' && String(s.id_kelas) !== String(gamifikasiFilterKelas)) return false;
-                              if (gamifikasiFilterTingkat !== 'all') {
-                                const t = getTingkat(s.kelas);
-                                if (String(t) !== String(gamifikasiFilterTingkat)) return false;
-                              }
-                              return true;
-                            })
-                            .sort((a, b) => (b.streak_sekarang || 0) - (a.streak_sekarang || 0));
+                  const topClass1 = classLeaderboard[0];
+                  const topClass2 = classLeaderboard[1];
+                  const topClass3 = classLeaderboard[2];
 
-                          if (list.length === 0) {
-                            return (
-                              <tr>
-                                <td colSpan={7} className="py-8 text-center text-slate-400 italic">
-                                  Tidak ada data siswa yang cocok dengan filter yang dipilih.
-                                </td>
-                              </tr>
-                            );
+                  return (
+                    <div className="space-y-6">
+                      {/* Banner Info Kategori Kelas */}
+                      <div className="p-4 rounded-2xl bg-blue-500/10 border border-blue-300 text-blue-950 flex items-center justify-between gap-3 text-xs">
+                        <div className="flex items-center gap-2">
+                          <School className="w-5 h-5 text-blue-600 shrink-0" />
+                          <span>
+                            <strong>Klasemen Antar Kelas:</strong> Peringkat dihitung dari persentase kehadiran rata-rata dan rerata streak seluruh siswa di kelas tersebut.
+                          </span>
+                        </div>
+                        <span className="font-mono font-bold text-blue-800 shrink-0">
+                          {classLeaderboard.length} Kelas Aktif
+                        </span>
+                      </div>
+
+                      {/* 3 Top Card Podium Kehormatan Kelas */}
+                      {(() => {
+                        const renderAdminClassPodiumCard = (cls, defaultOrder) => {
+                          if (!cls) return null;
+                          const isRank1 = cls.rank === 1;
+                          const isRank2 = cls.rank === 2;
+                          const isRank3 = cls.rank === 3;
+
+                          let bgClass = '';
+                          let badgeClass = '';
+                          let titleText = '';
+
+                          if (isRank1) {
+                            bgClass = 'border-3 border-amber-400 bg-gradient-to-b from-amber-50 to-white shadow-xl relative md:-translate-y-3 hover:border-amber-500 transition-all ring-4 ring-amber-400/20';
+                            badgeClass = 'bg-amber-400 text-slate-950 ring-4 ring-amber-300/50';
+                            titleText = cls.isShared ? '🤝 Juara 1 Bersama' : 'Kelas Terdisiplin Utama';
+                          } else if (isRank2) {
+                            bgClass = 'border-2 border-slate-300 bg-white shadow-md hover:border-slate-400 hover:shadow-lg transition-all ring-4 ring-slate-200/40';
+                            badgeClass = 'bg-slate-700 text-white ring-4 ring-slate-200';
+                            titleText = cls.isShared ? '🤝 Juara 2 Bersama' : 'Juara 2 Disiplin';
+                          } else {
+                            bgClass = 'border-2 border-amber-700/40 bg-white shadow-md hover:border-amber-700 hover:shadow-lg transition-all ring-4 ring-amber-700/10';
+                            badgeClass = 'bg-amber-800 text-white ring-4 ring-amber-100';
+                            titleText = cls.isShared ? '🤝 Juara 3 Bersama' : 'Juara 3 Disiplin';
                           }
 
-                          return list.slice(0, 50).map((st, idx) => {
-                            const summ = calculateStudentAchievementsSummary(st, {
-                              tahunAjaran: settings.tahun_ajaran_aktif,
-                              semesterAktif: settings.semester_aktif,
-                            });
-                            return (
-                              <tr key={st.nis} className="hover:bg-slate-50/80 transition-colors">
-                                <td className="py-3 px-3 text-center">
-                                  <span
-                                    className={`w-7 h-7 rounded-xl text-xs font-black inline-flex items-center justify-center shadow-2xs ${
-                                      idx === 0
-                                        ? 'bg-amber-400 text-slate-950 font-black ring-2 ring-amber-400/30'
-                                        : idx === 1
-                                        ? 'bg-slate-300 text-slate-900 font-black border border-slate-400'
-                                        : idx === 2
-                                        ? 'bg-amber-800 text-white font-black'
-                                        : 'bg-slate-100 text-slate-700 font-bold border border-slate-200'
-                                    }`}
-                                  >
-                                    {idx + 1}
-                                  </span>
-                                </td>
-                                <td className="py-3 px-3 font-extrabold text-slate-900">{st.nama}</td>
-                                <td className="py-3 px-3 font-mono font-bold text-slate-600">{st.nis}</td>
-                                <td className="py-3 px-3 font-bold text-blue-700">
-                                  Kelas {st.kelas?.nama_kelas || '-'}
-                                </td>
-                                <td className="py-3 px-3">
-                                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-orange-100 text-orange-800 border border-orange-300 shadow-2xs">
-                                    <Flame className="w-3.5 h-3.5 fill-orange-500 text-orange-500" />
-                                    <span>{st.streak_sekarang || 0} Hari</span>
-                                  </span>
-                                </td>
-                                <td className="py-3 px-3">
-                                  <div className="flex items-center gap-2">
-                                    <span className="px-2 py-0.5 rounded-md bg-indigo-100 text-indigo-900 font-black text-[10px] border border-indigo-200 shadow-2xs">
-                                      Lvl {summ.level}
-                                    </span>
-                                    <span className="font-mono text-slate-800 font-black text-xs">{summ.totalXp.toLocaleString()} XP</span>
-                                  </div>
-                                </td>
-                                <td className="py-3 px-3 text-center">
-                                  <div className="flex items-center justify-center gap-1.5">
-                                    <button
-                                      type="button"
-                                      onClick={() => setSelectedStudentForAchievement(st)}
-                                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1 shadow-xs"
-                                    >
-                                      <Trophy className="w-3.5 h-3.5" />
-                                      <span>Detail Badges</span>
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setSelectedStudentForCert(st);
-                                        setCertSummary(summ);
-                                      }}
-                                      className="px-3 py-1.5 bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-black rounded-xl transition-all cursor-pointer flex items-center gap-1 shadow-xs"
-                                    >
-                                      <Award className="w-3.5 h-3.5 fill-slate-950" />
-                                      <span>Cetak Piagam</span>
-                                    </button>
-                                  </div>
-                                </td>
+                          return (
+                            <div className={`rounded-3xl p-6 sm:p-7 text-center space-y-3.5 transition-all relative ${bgClass} ${defaultOrder}`}>
+                              <div className="absolute -top-3 left-1/2 -translate-x-1/2 whitespace-nowrap">
+                                <span className={`px-4 py-1 rounded-full font-black text-[11px] uppercase tracking-wider inline-flex items-center gap-1 shadow-md ${
+                                  isRank1 ? 'bg-amber-400 text-slate-950' : isRank2 ? 'bg-slate-700 text-white' : 'bg-amber-800 text-white'
+                                }`}>
+                                  {isRank1 ? <Trophy className="w-3.5 h-3.5 fill-current" /> : <Award className="w-3.5 h-3.5" />}
+                                  <span>{titleText}</span>
+                                </span>
+                              </div>
+                              <span className={`w-14 h-14 sm:w-16 sm:h-16 rounded-full font-black text-xl sm:text-2xl mx-auto flex items-center justify-center shadow-lg mt-2 ${badgeClass}`}>
+                                {cls.medalEmoji || (isRank1 ? '🥇 1' : isRank2 ? '🥈 2' : '🥉 3')}
+                              </span>
+                              <div className="space-y-0.5">
+                                <h4 className="font-black text-2xl text-slate-950">Kelas {cls.nama_kelas}</h4>
+                                <p className="text-xs font-bold text-slate-600">Wali: {cls.guru?.nama || '-'}</p>
+                                <p className="text-[10px] text-slate-400">{cls.totalStudents} Siswa Terdaftar</p>
+                              </div>
+                              <div className="space-y-1">
+                                <div className={`text-3xl font-black font-mono ${isRank1 ? 'text-amber-950' : 'text-slate-800'}`}>
+                                  {cls.percentage}%
+                                </div>
+                                <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black border ${
+                                  isRank1 ? 'bg-amber-100 text-amber-900 border-amber-300' : 'bg-slate-100 text-slate-800 border-slate-300'
+                                }`}>
+                                  <Flame className={`w-3.5 h-3.5 ${isRank1 ? 'fill-amber-600 text-amber-600' : 'fill-orange-500 text-orange-500'}`} />
+                                  <span>Rerata Streak: {cls.avgActiveStreak} Hari</span>
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        };
+
+                        return (
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+                            {topClass2 && renderAdminClassPodiumCard(topClass2, 'order-2 md:order-1')}
+                            {topClass1 && renderAdminClassPodiumCard(topClass1, 'order-1 md:order-2')}
+                            {topClass3 && renderAdminClassPodiumCard(topClass3, 'order-3 md:order-3')}
+                          </div>
+                        );
+                      })()}
+
+                      {/* Tabel Klasemen Seluruh Kelas */}
+                      <div className="rounded-3xl p-6 shadow-sm border border-slate-200 bg-white space-y-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <h3 className="text-sm font-black text-slate-800 flex items-center gap-2">
+                            <Trophy className="w-4 h-4 text-amber-500" />
+                            Klasemen Lengkap Kedisiplinan Seluruh Kelas
+                          </h3>
+                          <span className="text-xs text-slate-500">
+                            Diperbarui berdasarkan akumulasi kehadiran siswa per kelas
+                          </span>
+                        </div>
+
+                        <div className="overflow-x-auto pb-1">
+                          <table className="w-full min-w-[700px] text-left text-xs">
+                            <thead>
+                              <tr className="border-b border-slate-200 bg-slate-50 text-slate-600 font-bold uppercase tracking-wider text-[10px]">
+                                <th className="py-3 px-3 text-center">Rank</th>
+                                <th className="py-3 px-3">Nama Kelas</th>
+                                <th className="py-3 px-3">Wali Kelas</th>
+                                <th className="py-3 px-3">Total Siswa</th>
+                                <th className="py-3 px-3">Persentase Kehadiran</th>
+                                <th className="py-3 px-3">Rerata Streak</th>
+                                <th className="py-3 px-3">Siswa Hadir Sempurna</th>
                               </tr>
-                            );
-                          });
-                        })()}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {classLeaderboard.map((cls) => (
+                                <tr key={cls.id_kelas} className="hover:bg-slate-50/80 transition-colors">
+                                  <td className="py-3 px-3 text-center">
+                                    <span
+                                      className={`w-7 h-7 rounded-xl text-xs font-black inline-flex items-center justify-center shadow-2xs ${
+                                        cls.rank === 1
+                                          ? 'bg-amber-400 text-slate-950 font-black ring-2 ring-amber-400/30'
+                                          : cls.rank === 2
+                                          ? 'bg-slate-300 text-slate-900 font-black border border-slate-400'
+                                          : cls.rank === 3
+                                          ? 'bg-amber-800 text-white font-black'
+                                          : 'bg-slate-100 text-slate-700 font-bold border border-slate-200'
+                                      }`}
+                                    >
+                                      {cls.rank}
+                                    </span>
+                                  </td>
+                                  <td className="py-3 px-3 font-extrabold text-slate-900 text-sm">
+                                    <div className="flex items-center gap-1.5">
+                                      <span>Kelas {cls.nama_kelas}</span>
+                                      {cls.isShared && (
+                                        <span className="px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 text-[10px] font-black border border-amber-200">
+                                          = Seri
+                                        </span>
+                                      )}
+                                    </div>
+                                  </td>
+                                  <td className="py-3 px-3 font-bold text-slate-700">
+                                    {cls.guru?.nama || '-'}
+                                  </td>
+                                  <td className="py-3 px-3 font-mono font-bold text-slate-600">
+                                    {cls.totalStudents} Siswa
+                                  </td>
+                                  <td className="py-3 px-3">
+                                    <div className="space-y-1">
+                                      <div className="flex items-center justify-between text-xs font-black">
+                                        <span className="text-slate-800">{cls.percentage}%</span>
+                                        <span className="text-[10px] text-slate-400 font-mono">Kehadiran</span>
+                                      </div>
+                                      <div className="w-36 h-2 bg-slate-100 rounded-full overflow-hidden border border-slate-200">
+                                        <div
+                                          className={`h-full rounded-full transition-all ${
+                                            cls.percentage >= 95
+                                              ? 'bg-emerald-500'
+                                              : cls.percentage >= 85
+                                              ? 'bg-blue-500'
+                                              : cls.percentage >= 75
+                                              ? 'bg-amber-500'
+                                              : 'bg-rose-500'
+                                          }`}
+                                          style={{ width: `${cls.percentage}%` }}
+                                        />
+                                      </div>
+                                    </div>
+                                  </td>
+                                  <td className="py-3 px-3">
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-50 text-amber-900 border border-amber-200">
+                                      <Flame className="w-3 h-3 fill-orange-500 text-orange-500" />
+                                      <span>{cls.avgActiveStreak} Hari</span>
+                                    </span>
+                                  </td>
+                                  <td className="py-3 px-3 font-mono font-bold text-slate-700">
+                                    {cls.perfectStreakCount} Siswa
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* ========================================================= */}
+                {/* 3. KATEGORI: KOMPARASI ANGKATAN (TINGKAT 7, 8, 9)          */}
+                {/* ========================================================= */}
+                {hallOfFameCategory === 'tingkat' && (() => {
+                  const gradeComparison = calculateGradeDisciplineComparison(classes, students, holidays, {
+                    tahunAjaran: settings.tahun_ajaran_aktif,
+                    semester: settings.semester_aktif,
+                  });
+
+                  return (
+                    <div className="space-y-6">
+                      {/* Banner Info Kategori Tingkat */}
+                      <div className="p-4 rounded-2xl bg-indigo-500/10 border border-indigo-300 text-indigo-950 flex items-center justify-between gap-3 text-xs">
+                        <div className="flex items-center gap-2">
+                          <TrendingUp className="w-5 h-5 text-indigo-600 shrink-0" />
+                          <span>
+                            <strong>Komparasi Angkatan:</strong> Evaluasi perbandingan tingkat kedisiplinan dan persentase kehadiran antara Tingkat 7, 8, dan 9 secara menyeluruh.
+                          </span>
+                        </div>
+                        <span className="font-mono font-bold text-indigo-800 shrink-0">
+                          3 Angkatan Sekolah
+                        </span>
+                      </div>
+
+                      {/* Visual Cards Komparasi Tingkat */}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                        {gradeComparison.map((g, idx) => (
+                          <div
+                            key={g.tingkat}
+                            className={`rounded-3xl p-6 border-2 transition-all relative space-y-4 ${
+                              g.isChampion
+                                ? 'bg-gradient-to-b from-amber-50/80 to-white border-amber-400 shadow-lg ring-4 ring-amber-400/20'
+                                : 'bg-white border-slate-200 shadow-sm hover:border-slate-300'
+                            }`}
+                          >
+                            {g.isChampion && (
+                              <div className="absolute -top-3 right-4">
+                                <span className="px-3 py-1 rounded-full bg-amber-400 text-slate-950 font-black text-[10px] uppercase tracking-wider inline-flex items-center gap-1 shadow-xs">
+                                  <Trophy className="w-3 h-3" />
+                                  <span>Angkatan Terdisiplin 🏆</span>
+                                </span>
+                              </div>
+                            )}
+
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500 block">
+                                  Peringkat #{g.rank} {g.isShared ? '(Bersama)' : ''}
+                                </span>
+                                <h4 className="font-black text-xl text-slate-900">{g.label}</h4>
+                              </div>
+                              <span className={`w-10 h-10 rounded-2xl flex items-center justify-center text-lg font-black ${
+                                g.rank === 1 ? 'bg-amber-400 text-slate-950' : g.rank === 2 ? 'bg-slate-300 text-slate-900' : 'bg-amber-800 text-white'
+                              }`}>
+                                {g.rank === 1 ? '🥇' : g.rank === 2 ? '🥈' : '🥉'}
+                              </span>
+                            </div>
+
+                            {/* Persentase Kehadiran Angkatan */}
+                            <div className="space-y-1.5 p-4 rounded-2xl bg-slate-50 border border-slate-200">
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs font-bold text-slate-600">Rerata Kehadiran</span>
+                                <span className="text-2xl font-black font-mono text-slate-900">{g.percentage}%</span>
+                              </div>
+                              <div className="w-full h-3 bg-slate-200 rounded-full overflow-hidden">
+                                <div
+                                  className={`h-full rounded-full transition-all ${
+                                    g.isChampion ? 'bg-amber-500' : 'bg-blue-600'
+                                  }`}
+                                  style={{ width: `${g.percentage}%` }}
+                                />
+                              </div>
+                            </div>
+
+                            {/* Rincian Angka */}
+                            <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                              <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200">
+                                <span className="text-[10px] text-slate-500 block font-bold">Rombel</span>
+                                <span className="font-black text-slate-800 font-mono text-sm">{g.classesCount} Kelas</span>
+                              </div>
+                              <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200">
+                                <span className="text-[10px] text-slate-500 block font-bold">Total Siswa</span>
+                                <span className="font-black text-slate-800 font-mono text-sm">{g.totalStudents}</span>
+                              </div>
+                              <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200">
+                                <span className="text-[10px] text-slate-500 block font-bold">Rerata Streak</span>
+                                <span className="font-black text-orange-600 font-mono text-sm">{g.avgStreak} Hari</span>
+                              </div>
+                            </div>
+
+                            {/* Daftar Kelas di Angkatan */}
+                            <div className="space-y-1.5 pt-2 border-t border-slate-100 text-xs">
+                              <span className="text-[11px] font-bold text-slate-500 block">Rincian Performa Kelas:</span>
+                              <div className="space-y-1">
+                                {g.classes.map((cls) => (
+                                  <div key={cls.id_kelas} className="flex items-center justify-between text-xs py-1 px-2 rounded-lg bg-slate-50">
+                                    <span className="font-bold text-slate-700">Kelas {cls.nama_kelas}</span>
+                                    <span className="font-mono font-black text-slate-900">{cls.percentage}%</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             )}
+
 
             {/* SUB-TAB 2: KATALOG & MONITORING MISI SEKOLAH */}
             {gamifikasiSubTab === 'misi_sekolah' && (
@@ -7355,60 +8069,6 @@ export default function AdminDashboard() {
                 </div>
               </div>
             )}
-
-            {/* SUB-TAB 3: PUSAT CETAK PIAGAM RESMI */}
-            {gamifikasiSubTab === 'piagam' && (
-              <div className="rounded-3xl p-6 shadow-sm border border-slate-200 bg-white space-y-5">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200">
-                  <div>
-                    <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
-                      <Award className="w-5 h-5 text-amber-500" />
-                      Penerbitan Piagam Penghargaan Siswa Teladan
-                    </h3>
-                    <p className="text-xs text-slate-600 font-medium mt-0.5">
-                      Pilih siswa berprestasi untuk mengenerate piagam berstempel resmi dan bertanda tangan Kepala Sekolah ({settings.kepala_sekolah_nama}).
-                    </p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {students
-                    .filter((s) => (s.streak_sekarang || 0) >= 7)
-                    .slice(0, 15)
-                    .map((st) => {
-                      const summ = calculateStudentAchievementsSummary(st, {
-                        tahunAjaran: settings.tahun_ajaran_aktif,
-                        semesterAktif: settings.semester_aktif,
-                      });
-                      return (
-                        <div
-                          key={st.nis}
-                          className="p-4 rounded-2xl border border-slate-200 bg-slate-50/70 hover:bg-slate-100/80 flex items-center justify-between gap-3 transition-colors shadow-2xs"
-                        >
-                          <div>
-                            <span className="font-black text-xs text-slate-900 block">{st.nama}</span>
-                            <span className="text-[11px] text-slate-700 font-medium">
-                              Kelas <strong className="text-blue-700">{st.kelas?.nama_kelas || '-'}</strong> • Streak: <strong className="text-orange-600 font-black">{st.streak_sekarang} Hari</strong>
-                            </span>
-                          </div>
-
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedStudentForCert(st);
-                              setCertSummary(summ);
-                            }}
-                            className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black rounded-xl text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs shrink-0"
-                          >
-                            <Printer className="w-3.5 h-3.5" />
-                            <span>Cetak</span>
-                          </button>
-                        </div>
-                      );
-                    })}
-                </div>
-              </div>
-            )}
           </div>
         )}
 
@@ -7431,7 +8091,14 @@ export default function AdminDashboard() {
         )}
 
         {/* ========================================================= */}
-        {/* TAB 11: PENGATURAN PROFIL & AKUN ADMINISTRATOR             */}
+        {/* TAB 11: LOG AKTIVITAS & AUDIT KEAMANAN SISTEM (ADMIN)     */}
+        {/* ========================================================= */}
+        {activeTab === 'log_aktivitas' && (
+          <AdminActivityLogCenter />
+        )}
+
+        {/* ========================================================= */}
+        {/* TAB 12: PENGATURAN PROFIL & AKUN ADMINISTRATOR             */}
         {/* ========================================================= */}
         {activeTab === 'profil_admin' && (
           <AdminProfileSettings
@@ -7452,32 +8119,193 @@ export default function AdminDashboard() {
         {/* MODAL PREVIEW CETAK ID CARD QR FISIK                      */}
         {/* ========================================================= */}
         {selectedStudentForCard && (
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-            <div className="max-w-xs w-full bg-white text-slate-900 rounded-3xl shadow-2xl border-4 border-blue-600 text-center p-6 space-y-3 relative">
-              <button
-                onClick={() => setSelectedStudentForCard(null)}
-                className="absolute right-4 top-4 text-slate-400 hover:text-slate-600 font-bold"
-              >
-                ✕
-              </button>
-              <span className="text-[10px] font-black uppercase text-blue-700 tracking-wider block">
-                KARTU PELAJAR DIGITAL
-              </span>
-              <p className="text-xs font-bold text-slate-600">SMP NEGERI 2 KOTA BANGUN</p>
-              <img
-                src={selectedStudentForCard.foto_wajah || 'https://placehold.co/100x100/1e3a8a/ffffff?text=Murid'}
-                alt="Wajah"
-                className="w-20 h-20 mx-auto rounded-2xl object-cover ring-2 ring-blue-500 shadow-sm"
-              />
-              <h4 className="text-base font-black text-slate-800">{selectedStudentForCard.nama}</h4>
-              <p className="text-xs text-slate-500">NIS: {selectedStudentForCard.nis} • {selectedStudentForCard.kelas?.nama_kelas || '-'}</p>
-              {idCardQrUrl && <img src={idCardQrUrl} alt="QR Siswa" className="w-40 h-40 mx-auto" />}
-              <button
-                onClick={() => window.print()}
-                className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-              >
-                <Printer className="w-4 h-4" /> Print Kartu Fisik
-              </button>
+          <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto print:static print:bg-transparent print:p-0 print:overflow-visible print:inset-auto">
+            {/* Scoped Media Print Stylesheet */}
+            <style>{`
+              @media print {
+                @page {
+                  size: auto;
+                  margin: 10mm;
+                }
+                body {
+                  background: #ffffff !important;
+                }
+                body * {
+                  visibility: hidden;
+                }
+                #printArea, #printArea * {
+                  visibility: visible;
+                }
+                #printArea {
+                  position: relative !important;
+                  margin: 20mm auto !important;
+                  width: 85.6mm !important;
+                  max-width: 85.6mm !important;
+                  box-shadow: none !important;
+                  border: 1.5px solid #0f172a !important;
+                  border-radius: 12px !important;
+                  overflow: hidden !important;
+                  -webkit-print-color-adjust: exact !important;
+                  print-color-adjust: exact !important;
+                  page-break-inside: avoid !important;
+                  break-inside: avoid !important;
+                  page-break-after: avoid !important;
+                  break-after: avoid !important;
+                }
+                .no-print, [data-no-print="true"] {
+                  display: none !important;
+                }
+              }
+            `}</style>
+            <div className="max-w-md w-full bg-slate-100 rounded-3xl p-5 sm:p-6 shadow-2xl border border-slate-300 space-y-4 relative my-auto animate-in zoom-in-95 duration-200 print:bg-transparent print:border-none print:shadow-none print:p-0 print:m-0 print:w-auto print:max-w-none">
+              {/* Header Modal & Tombol Tutup */}
+              <div className="flex items-center justify-between pb-3 border-b border-slate-200 no-print">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 bg-blue-100 text-blue-700 rounded-xl">
+                    <QrCode className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-slate-800 leading-tight">
+                      Cetak ID Card QR Fisik Siswa
+                    </h3>
+                    <p className="text-[11px] text-slate-500">
+                      Standar kartu pelajar fisik & scanner presensi KBM
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedStudentForCard(null)}
+                  className="p-1.5 text-slate-400 hover:text-slate-700 rounded-xl hover:bg-slate-200 transition-colors cursor-pointer"
+                  title="Tutup Modal"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* AREA KARTU FISIK ASLI (PRINTABLE CARD) */}
+              <div className="flex justify-center">
+                <div
+                  id="printArea"
+                  className="printable-id-card w-full max-w-[320px] bg-white rounded-2xl shadow-lg border border-slate-300 overflow-hidden text-slate-800 text-center relative"
+                >
+                  {/* Header Kartu Biru Navy */}
+                  <div className="bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 text-white p-3.5 relative overflow-hidden">
+                    <div className="relative z-10 flex items-center justify-center gap-2.5">
+                      <div className="w-8 h-8 rounded-lg bg-white/10 p-0.5 border border-white/20 shrink-0 flex items-center justify-center">
+                        <img
+                          src={settings.sekolah_logo || 'https://placehold.co/100x100/1e3a8a/ffffff?text=SMPN2'}
+                          alt="Logo Sekolah"
+                          className="w-full h-full object-contain rounded-md"
+                        />
+                      </div>
+                      <div className="text-left min-w-0">
+                        <h4 className="text-[11px] font-black uppercase tracking-wider leading-tight text-white truncate">
+                          {settings.sekolah_nama || 'SMP NEGERI 2 KOTA BANGUN'}
+                        </h4>
+                        <p className="text-[9px] text-cyan-200 font-bold tracking-wide uppercase">
+                          KARTU TANDA PELAJAR & PRESENSI
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Body Kartu */}
+                  <div className="p-4 space-y-3 bg-white">
+                    {/* Foto Siswa */}
+                    <div className="relative mx-auto w-20 h-24 rounded-xl overflow-hidden border-2 border-blue-600 shadow-xs bg-slate-100 flex items-center justify-center">
+                      <img
+                        src={selectedStudentForCard.foto_wajah || 'https://placehold.co/100x100/1e3a8a/ffffff?text=Murid'}
+                        alt={selectedStudentForCard.nama}
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+
+                    {/* Identitas Siswa */}
+                    <div className="space-y-0.5">
+                      <h4 className="text-sm font-black text-slate-900 leading-snug break-words">
+                        {selectedStudentForCard.nama}
+                      </h4>
+                      <p className="text-[11px] font-bold text-blue-700 font-mono">
+                        NIS: {selectedStudentForCard.nis}
+                      </p>
+                      <div className="flex items-center justify-center gap-1.5 pt-1 text-[10px] text-slate-600">
+                        <span className="px-2 py-0.5 bg-slate-100 rounded-md font-bold border border-slate-200">
+                          Kelas: {selectedStudentForCard.kelas?.nama_kelas || '-'}
+                        </span>
+                        <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded-md font-bold border border-emerald-200">
+                          T.A. {settings.tahun_ajaran_aktif || '2026/2027'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* QR Code Presensi Dinamis */}
+                    <div className="p-2.5 bg-slate-50 rounded-xl border border-slate-200 space-y-1.5">
+                      {idCardQrUrl ? (
+                        <img
+                          src={idCardQrUrl}
+                          alt="QR Presensi Siswa"
+                          className="w-36 h-36 mx-auto rounded-lg border border-slate-300/80 bg-white p-1"
+                        />
+                      ) : (
+                        <div className="w-36 h-36 mx-auto bg-slate-200 animate-pulse rounded-lg flex items-center justify-center text-xs text-slate-400">
+                          Membuat QR...
+                        </div>
+                      )}
+                      <p className="text-[9px] font-mono text-slate-500 tracking-tight">
+                        Token: {selectedStudentForCard.qr_token_pribadi || selectedStudentForCard.nis}
+                      </p>
+                    </div>
+
+                    {/* Footer Kartu */}
+                    <p className="text-[8px] text-slate-400 leading-tight">
+                      Scan QR ini pada kamera guru untuk validasi presensi harian KBM SIAK Anti-Cheat.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons (Print & Download & Close) */}
+              <div className="pt-2 flex flex-col sm:flex-row items-center gap-2 border-t border-slate-200 no-print">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!selectedStudentForCard) {
+                      toast.error('Pilih siswa terlebih dahulu.');
+                      return;
+                    }
+                    if (!idCardQrUrl) {
+                      toast.warning('Sedang memproses QR code kartu presensi, mohon tunggu beberapa detik...');
+                      return;
+                    }
+                    setTimeout(() => window.print(), 150);
+                  }}
+                  className="w-full sm:flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 active:scale-95 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md shadow-blue-600/20"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>Print Kartu Fisik</span>
+                </button>
+
+                {idCardQrUrl && (
+                  <a
+                    href={idCardQrUrl}
+                    download={`QR_Presensi_${selectedStudentForCard.nis}_${(selectedStudentForCard.nama || '').replace(/\s+/g, '_')}.png`}
+                    className="w-full sm:w-auto px-4 py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer"
+                    title="Unduh QR Code sebagai file gambar PNG"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Unduh QR</span>
+                  </a>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => setSelectedStudentForCard(null)}
+                  className="w-full sm:w-auto px-4 py-2.5 bg-slate-200/80 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                >
+                  Tutup
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -7499,7 +8327,7 @@ export default function AdminDashboard() {
                       {modalType === 'add_siswa' ? 'Tambah Siswa Baru' : 'Edit Data Siswa'}
                     </h3>
                     <p className="text-[11px] text-slate-400">
-                      {modalType === 'add_siswa' ? 'Daftarkan siswa baru ke rombel kelas' : `Perbarui data NIS: ${formData.nis}`}
+                      {modalType === 'add_siswa' ? 'Daftarkan siswa baru ke kelas' : `Perbarui data NIS: ${formData.nis}`}
                     </p>
                   </div>
                 </div>
@@ -7545,7 +8373,7 @@ export default function AdminDashboard() {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-slate-600 mb-1">Rombel Kelas</label>
+                    <label className="block text-xs font-bold text-slate-600 mb-1">Kelas</label>
                     <select
                       value={formData.id_kelas || ''}
                       onChange={(e) => setFormData({ ...formData, id_kelas: e.target.value })}
@@ -7782,7 +8610,7 @@ export default function AdminDashboard() {
                     })}
                   </select>
                   <span className="text-[10px] text-slate-400 mt-1 block">
-                    Menetapkan guru ini sebagai wali kelas akan otomatis mengaktifkan fitur pantau presensi rombel di GuruDashboard.
+                    Menetapkan guru ini sebagai wali kelas akan otomatis mengaktifkan fitur pantau presensi kelas di GuruDashboard.
                   </span>
                 </div>
 
@@ -8063,11 +8891,11 @@ export default function AdminDashboard() {
                     <div className="p-8 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200 space-y-2">
                       <Calendar className="w-8 h-8 text-slate-300 mx-auto" />
                       <p className="text-xs font-bold text-slate-600">Belum ada jadwal mengajar terdaftar.</p>
-                      <p className="text-[11px] text-slate-400">Guru ini belum dijadwalkan mengajar di rombel kelas manapun.</p>
+                      <p className="text-[11px] text-slate-400">Guru ini belum dijadwalkan mengajar di kelas manapun.</p>
                     </div>
                   ) : (
-                    <div className="overflow-x-auto rounded-2xl border border-slate-200 max-h-60 overflow-y-auto">
-                      <table className="w-full text-left text-xs">
+                    <div className="overflow-x-auto rounded-2xl border border-slate-200 max-h-60 overflow-y-auto pb-1">
+                      <table className="w-full min-w-[550px] text-left text-xs">
                         <thead className="bg-slate-50 text-slate-600 font-bold text-[11px] sticky top-0">
                           <tr>
                             <th className="p-2.5">Hari & Jam</th>
@@ -8093,7 +8921,22 @@ export default function AdminDashboard() {
                   )}
                 </div>
 
-                <div className="pt-2 flex justify-end">
+                <div className="pt-2 flex items-center justify-between gap-2 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedTeacherForSchedule(null);
+                      setSelectedTeacherForSchedulePrint(t);
+                      setSchedulePrintMode('single');
+                      setSchedulePrintModalOpen(true);
+                    }}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
+                    title="Buka Dokumen Resmi Jadwal Guru (PDF & Excel)"
+                  >
+                    <Printer className="w-4 h-4" />
+                    <span>Buka Lembar Jadwal (PDF & Excel)</span>
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => setSelectedTeacherForSchedule(null)}
@@ -8116,7 +8959,7 @@ export default function AdminDashboard() {
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="text-base font-bold text-slate-800">
-                    {formData.id_kelas ? 'Edit Kelas & Wali Kelas' : 'Tambah Rombel Kelas Baru'}
+                    {formData.id_kelas ? 'Edit Kelas & Wali Kelas' : 'Tambah Kelas Baru'}
                   </h3>
                   <p className="text-[11px] text-slate-400">
                     {formData.id_kelas ? 'Perbarui tingkat jenjang, peminatan (IPA/IPS), atau guru wali kelas' : 'Pilih tingkat (VII, VIII, IX), jurusan (IPA/IPS), dan tentukan wali kelas'}
@@ -8144,8 +8987,8 @@ export default function AdminDashboard() {
                           type="button"
                           onClick={() => {
                             const curJurusan = formData.jurusan || 'IPA';
-                            const curRombel = formData.rombel || '1';
-                            const newNama = `${t.roman}-${curJurusan}-${curRombel}`;
+                            const curParalel = formData.paralel || '1';
+                            const newNama = `${t.roman}-${curJurusan}-${curParalel}`;
                             setFormData((prev) => ({
                               ...prev,
                               tingkat: t.val,
@@ -8185,8 +9028,8 @@ export default function AdminDashboard() {
                           onClick={() => {
                             const curTingkat = parseInt(formData.tingkat) || 7;
                             const roman = romanMap[curTingkat] || 'VII';
-                            const curRombel = formData.rombel || '1';
-                            const newNama = `${roman}-${j.code}-${curRombel}`;
+                            const curParalel = formData.paralel || '1';
+                            const newNama = `${roman}-${j.code}-${curParalel}`;
                             setFormData((prev) => ({
                               ...prev,
                               jurusan: j.code,
@@ -8220,31 +9063,31 @@ export default function AdminDashboard() {
                   </div>
                 </div>
 
-                {/* 3. NOMOR / KODE SUB-ROMBEL CEPAT */}
-                {/* 3. NOMOR / KODE SUB-ROMBEL (PILIHAN ANGKA / HURUF + DINAMIS) */}
+                {/* 3. NOMOR / KODE PARALEL KELAS CEPAT */}
+                {/* 3. NOMOR / KODE PARALEL KELAS (PILIHAN ANGKA / HURUF + DINAMIS) */}
                 <div>
                   <div className="flex items-center justify-between mb-2">
                     <label className="block text-xs font-bold text-slate-700">
-                      3. Kode / Nomor Rombel <span className="text-rose-500">*</span>
+                      3. Kode / Nomor Paralel Kelas <span className="text-rose-500">*</span>
                     </label>
                     {/* Toggle format: Angka vs Huruf */}
                     <div className="flex bg-slate-100 p-0.5 rounded-xl border border-slate-200">
                       <button
                         type="button"
                         onClick={() => {
-                          setRombelFormat('angka');
+                          setParalelFormat('angka');
                           const curTingkat = parseInt(formData.tingkat) || 7;
                           const roman = { 7: 'VII', 8: 'VIII', 9: 'IX' }[curTingkat] || 'VII';
                           const curJurusan = formData.jurusan || 'IPA';
-                          const defaultNum = rombelNumbers[0] || '1';
+                          const defaultNum = paralelNumbers[0] || '1';
                           setFormData((prev) => ({
                             ...prev,
-                            rombel: defaultNum,
+                            paralel: defaultNum,
                             nama_kelas: `${roman}-${curJurusan}-${defaultNum}`,
                           }));
                         }}
                         className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition-all cursor-pointer ${
-                          rombelFormat === 'angka'
+                          paralelFormat === 'angka'
                             ? 'bg-white text-blue-700 shadow-2xs'
                             : 'text-slate-500 hover:text-slate-700'
                         }`}
@@ -8254,19 +9097,19 @@ export default function AdminDashboard() {
                       <button
                         type="button"
                         onClick={() => {
-                          setRombelFormat('huruf');
+                          setParalelFormat('huruf');
                           const curTingkat = parseInt(formData.tingkat) || 7;
                           const roman = { 7: 'VII', 8: 'VIII', 9: 'IX' }[curTingkat] || 'VII';
                           const curJurusan = formData.jurusan || 'IPA';
-                          const defaultLetter = rombelLetters[0] || 'A';
+                          const defaultLetter = paralelLetters[0] || 'A';
                           setFormData((prev) => ({
                             ...prev,
-                            rombel: defaultLetter,
+                            paralel: defaultLetter,
                             nama_kelas: `${roman}-${curJurusan}-${defaultLetter}`,
                           }));
                         }}
                         className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition-all cursor-pointer ${
-                          rombelFormat === 'huruf'
+                          paralelFormat === 'huruf'
                             ? 'bg-white text-blue-700 shadow-2xs'
                             : 'text-slate-500 hover:text-slate-700'
                         }`}
@@ -8279,8 +9122,8 @@ export default function AdminDashboard() {
                   {/* List of buttons according to active format */}
                   <div className="space-y-2">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      {(rombelFormat === 'angka' ? rombelNumbers : rombelLetters).map((code) => {
-                        const isSelected = (formData.rombel || '').toString().toUpperCase() === code.toString().toUpperCase();
+                      {(paralelFormat === 'angka' ? paralelNumbers : paralelLetters).map((code) => {
+                        const isSelected = (formData.paralel || '').toString().toUpperCase() === code.toString().toUpperCase();
                         const romanMap = { 7: 'VII', 8: 'VIII', 9: 'IX' };
                         return (
                           <button
@@ -8291,10 +9134,10 @@ export default function AdminDashboard() {
                               const roman = romanMap[curTingkat] || 'VII';
                               const curJurusan = formData.jurusan || 'IPA';
                               const newNama = `${roman}-${curJurusan}-${code}`;
-                              setCustomRombelInput('');
+                              setCustomParalelInput('');
                               setFormData((prev) => ({
                                 ...prev,
-                                rombel: code,
+                                paralel: code,
                                 nama_kelas: newNama,
                               }));
                             }}
@@ -8309,20 +9152,20 @@ export default function AdminDashboard() {
                         );
                       })}
 
-                      {/* Tombol Tambah Pilihan Rombel berikutnya jika kelas ada lebih banyak */}
-                      {rombelFormat === 'angka' ? (
+                      {/* Tombol Tambah Pilihan Paralel Kelas berikutnya jika kelas ada lebih banyak */}
+                      {paralelFormat === 'angka' ? (
                         <button
                           type="button"
                           onClick={() => {
-                            const nextNum = (rombelNumbers.length + 1).toString();
-                            if (!rombelNumbers.includes(nextNum)) {
-                              setRombelNumbers((prev) => [...prev, nextNum]);
+                            const nextNum = (paralelNumbers.length + 1).toString();
+                            if (!paralelNumbers.includes(nextNum)) {
+                              setParalelNumbers((prev) => [...prev, nextNum]);
                               const curTingkat = parseInt(formData.tingkat) || 7;
                               const roman = { 7: 'VII', 8: 'VIII', 9: 'IX' }[curTingkat] || 'VII';
                               const curJurusan = formData.jurusan || 'IPA';
                               setFormData((prev) => ({
                                 ...prev,
-                                rombel: nextNum,
+                                paralel: nextNum,
                                 nama_kelas: `${roman}-${curJurusan}-${nextNum}`,
                               }));
                             }
@@ -8331,22 +9174,22 @@ export default function AdminDashboard() {
                           title="Tambah pilihan nomor kelas berikutnya"
                         >
                           <Plus className="w-3.5 h-3.5" />
-                          <span>+ Tambah {rombelNumbers.length + 1}</span>
+                          <span>+ Tambah {paralelNumbers.length + 1}</span>
                         </button>
                       ) : (
                         <button
                           type="button"
                           onClick={() => {
-                            if (rombelLetters.length < 26) {
-                              const nextChar = String.fromCharCode(65 + rombelLetters.length);
-                              if (!rombelLetters.includes(nextChar)) {
-                                setRombelLetters((prev) => [...prev, nextChar]);
+                            if (paralelLetters.length < 26) {
+                              const nextChar = String.fromCharCode(65 + paralelLetters.length);
+                              if (!paralelLetters.includes(nextChar)) {
+                                setParalelLetters((prev) => [...prev, nextChar]);
                                 const curTingkat = parseInt(formData.tingkat) || 7;
                                 const roman = { 7: 'VII', 8: 'VIII', 9: 'IX' }[curTingkat] || 'VII';
                                 const curJurusan = formData.jurusan || 'IPA';
                                 setFormData((prev) => ({
                                   ...prev,
-                                  rombel: nextChar,
+                                  paralel: nextChar,
                                   nama_kelas: `${roman}-${curJurusan}-${nextChar}`,
                                 }));
                               }
@@ -8356,27 +9199,27 @@ export default function AdminDashboard() {
                           title="Tambah pilihan huruf kelas berikutnya"
                         >
                           <Plus className="w-3.5 h-3.5" />
-                          <span>+ Tambah {String.fromCharCode(65 + rombelLetters.length)}</span>
+                          <span>+ Tambah {String.fromCharCode(65 + paralelLetters.length)}</span>
                         </button>
                       )}
                     </div>
 
-                    {/* Input manual kode rombel kustom */}
+                    {/* Input manual kode paralel kelas kustom */}
                     <div className="flex items-center gap-2 pt-1">
                       <span className="text-[11px] text-slate-400 shrink-0">Atau ketik kustom:</span>
                       <input
                         type="text"
-                        value={customRombelInput}
+                        value={customParalelInput}
                         onChange={(e) => {
                           const val = e.target.value;
-                          setCustomRombelInput(val);
+                          setCustomParalelInput(val);
                           if (val.trim()) {
                             const curTingkat = parseInt(formData.tingkat) || 7;
                             const roman = { 7: 'VII', 8: 'VIII', 9: 'IX' }[curTingkat] || 'VII';
                             const curJurusan = formData.jurusan || 'IPA';
                             setFormData((prev) => ({
                               ...prev,
-                              rombel: val.trim(),
+                              paralel: val.trim(),
                               nama_kelas: `${roman}-${curJurusan}-${val.trim()}`,
                             }));
                           }
@@ -8388,10 +9231,10 @@ export default function AdminDashboard() {
                   </div>
                 </div>
 
-                {/* 4. NAMA ROMBEL KELAS (INPUT & LIVE PREVIEW) */}
+                {/* 4. NAMA KELAS (INPUT & LIVE PREVIEW) */}
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <label className="block text-xs font-bold text-slate-700">Nama Rombel Kelas</label>
+                    <label className="block text-xs font-bold text-slate-700">Nama Kelas</label>
                     <span className="text-[10px] text-slate-400">Bisa diedit manual jika perlu</span>
                   </div>
                   <input
@@ -8612,7 +9455,7 @@ export default function AdminDashboard() {
               const mapelConflict = conflictClass.mata_pelajaran?.nama_mapel || 'mapel lain';
               conflictWarning = {
                 type: 'kelas',
-                message: `Bentrok Rombel: Kelas ini sudah ada KBM "${mapelConflict}" pada hari ${curHari} pukul ${conflictClass.jam_mulai} - ${conflictClass.jam_selesai}.`
+                message: `Bentrok Jadwal: Kelas ini sudah ada KBM "${mapelConflict}" pada hari ${curHari} pukul ${conflictClass.jam_mulai} - ${conflictClass.jam_selesai}.`
               };
             }
           }
@@ -8629,16 +9472,16 @@ export default function AdminDashboard() {
                       <h3 className="text-base font-bold text-slate-800">
                         {formData.id_jadwal ? 'Edit Jadwal Pelajaran' : 'Tambah Jadwal Pelajaran'}
                       </h3>
-                      <p className="text-[11px] text-slate-400">Atur alokasi rombel, mapel, & guru pengampu</p>
+                      <p className="text-[11px] text-slate-400">Atur alokasi kelas, mapel, & guru pengampu</p>
                     </div>
                   </div>
                   <button onClick={() => setModalType(null)} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg">✕</button>
                 </div>
 
                 <form onSubmit={handleSaveJadwal} className="space-y-3.5">
-                  {/* Pilihan Rombel Kelas */}
+                  {/* Pilihan Kelas */}
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">Rombel Kelas <span className="text-rose-500">*</span></label>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">Kelas <span className="text-rose-500">*</span></label>
                     <select
                       required
                       value={formData.id_kelas || ''}
@@ -9253,7 +10096,7 @@ export default function AdminDashboard() {
         />
 
         {/* ========================================================= */}
-        {/* MODAL PLOTTING & PENEMPATAN ROMBEL SISWA (DEDIKASI)        */}
+        {/* MODAL PLOTTING & PENEMPATAN KELAS SISWA (DEDIKASI)        */}
         {/* ========================================================= */}
         {isPlottingModalOpen && selectedStudentForPlotting && (
           <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
@@ -9265,9 +10108,9 @@ export default function AdminDashboard() {
                     <FolderInput className="w-5 h-5 text-white" />
                   </div>
                   <div>
-                    <h3 className="text-base font-bold text-white">Plotting & Penempatan Rombel</h3>
+                    <h3 className="text-base font-bold text-white">Plotting & Penempatan Kelas</h3>
                     <p className="text-xs text-slate-400">
-                      Penetapan rombel siswa tanpa merubah identitas profil
+                      Penetapan kelas siswa tanpa merubah identitas profil
                     </p>
                   </div>
                 </div>
@@ -9298,31 +10141,31 @@ export default function AdminDashboard() {
                       NIS: {selectedStudentForPlotting.nis} {selectedStudentForPlotting.nisn ? `• NISN: ${selectedStudentForPlotting.nisn}` : ''}
                     </p>
                     <div className="mt-1 flex items-center gap-2">
-                      <span className="text-[11px] text-slate-500">Rombel Saat Ini:</span>
+                      <span className="text-[11px] text-slate-500">Kelas Saat Ini:</span>
                       {selectedStudentForPlotting.kelas?.nama_kelas ? (
                         <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200">
                           Kelas {selectedStudentForPlotting.kelas.nama_kelas}
                         </span>
                       ) : (
                         <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
-                          ⚠️ Belum Ada Rombel (Isi Nanti)
+                          ⚠️ Belum Ada Kelas (Isi Nanti)
                         </span>
                       )}
                     </div>
                   </div>
                 </div>
 
-                {/* Pilihan Rombel Baru */}
+                {/* Pilihan Kelas Baru */}
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                    Tentukan Rombel Baru / Status Penempatan
+                    Tentukan Kelas Baru / Status Penempatan
                   </label>
                   <select
                     value={plottingTargetKelas}
                     onChange={(e) => setPlottingTargetKelas(e.target.value)}
                     className="w-full px-3.5 py-2.5 bg-white border border-slate-300 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 cursor-pointer shadow-sm"
                   >
-                    <option value="">⏱️ Tunda Penempatan / Kosongkan Rombel (Isi Nanti)</option>
+                    <option value="">⏱️ Tunda Penempatan / Kosongkan Kelas (Isi Nanti)</option>
                     {/* Kelompokkan kelas terurut */}
                     {classes.map((cls) => {
                       const count = students.filter((st) => st.id_kelas === cls.id_kelas).length;
@@ -9342,7 +10185,7 @@ export default function AdminDashboard() {
                       <span>⏱️ Mode Penundaan (Isi Nanti)</span>
                     </p>
                     <p className="text-[11px] text-amber-700 leading-relaxed">
-                      Siswa akan tetap berstatus aktif namun tidak terafiliasi dengan kelas manapun. Cocok jika pembagian rombel baru masih dalam proses musyawarah atau seleksi peminatan.
+                      Siswa akan tetap berstatus aktif namun tidak terafiliasi dengan kelas manapun. Cocok jika pembagian kelas baru masih dalam proses musyawarah atau seleksi peminatan.
                     </p>
                   </div>
                 ) : (
@@ -9622,24 +10465,6 @@ export default function AdminDashboard() {
           student={selectedStudentForAchievement}
           tahunAjaran={settings.tahun_ajaran_aktif}
           semesterAktif={settings.semester_aktif}
-          onOpenCertificate={(st, sum) => {
-            setSelectedStudentForCert(st);
-            setCertSummary(sum);
-          }}
-        />
-
-        {/* ========================================================= */}
-        {/* MODAL PIAGAM PENGHARGAAN RESMI SEKOLAH                    */}
-        {/* ========================================================= */}
-        <SchoolCertificateModal
-          isOpen={Boolean(selectedStudentForCert)}
-          onClose={() => {
-            setSelectedStudentForCert(null);
-            setCertSummary(null);
-          }}
-          student={selectedStudentForCert}
-          summary={certSummary}
-          settings={settings}
         />
 
         {/* ========================================================= */}
@@ -9653,6 +10478,46 @@ export default function AdminDashboard() {
           onMissionsUpdated={(updatedList) => {
             setCustomMissionsList(updatedList);
           }}
+        />
+
+        {/* ========================================================= */}
+        {/* MODAL CETAK JADWAL MENGAJAR GURU RESMI (PDF & EXCEL)      */}
+        {/* ========================================================= */}
+        <TeacherScheduleReportModal
+          isOpen={schedulePrintModalOpen || Boolean(selectedTeacherForSchedulePrint)}
+          onClose={() => {
+            setSelectedTeacherForSchedulePrint(null);
+            setSchedulePrintModalOpen(false);
+          }}
+          teacher={selectedTeacherForSchedulePrint}
+          teachers={teachers}
+          schedules={schedules}
+          classes={classes}
+          subjects={subjects}
+          schoolSettings={settings}
+          initialMode={schedulePrintMode}
+        />
+
+        {/* ========================================================= */}
+        {/* MODAL CETAK JADWAL PELAJARAN KELAS RESMI (PDF & EXCEL)    */}
+        {/* ========================================================= */}
+        <ClassScheduleReportModal
+          isOpen={classSchedulePrintModalOpen || Boolean(selectedClassForSchedulePrint)}
+          onClose={() => {
+            setSelectedClassForSchedulePrint(null);
+            setClassSchedulePrintModalOpen(false);
+          }}
+          selectedClass={
+            selectedClassForSchedulePrint ||
+            classes.find((c) => String(c.id_kelas) === String(selectedKelasForJadwal)) ||
+            (classes.length > 0 ? classes[0] : null)
+          }
+          classes={classes}
+          schedules={schedules}
+          teachers={teachers}
+          subjects={subjects}
+          schoolSettings={settings}
+          initialMode={classSchedulePrintMode}
         />
         </main>
       </div>

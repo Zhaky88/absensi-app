@@ -16,6 +16,8 @@ import {
   Shield,
 } from 'lucide-react';
 import { useToast } from '../context/ToastModalContext';
+import { Download } from 'lucide-react';
+import PwaDownloadModal from '../components/PwaDownloadModal';
 
 export default function LoginPage() {
   const { smartLogin, loginAsDemoRole } = useAuth();
@@ -25,6 +27,41 @@ export default function LoginPage() {
   const [errorMsg, setErrorMsg] = useState('');
   const [loading, setLoading] = useState(false);
   const [copiedRole, setCopiedRole] = useState(null);
+  const [showPwaModal, setShowPwaModal] = useState(false);
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [isStandalone, setIsStandalone] = useState(false);
+  const [isIos, setIsIos] = useState(false);
+
+  useEffect(() => {
+    const checkStandalone =
+      window.matchMedia('(display-mode: standalone)').matches ||
+      window.navigator.standalone === true;
+    setIsStandalone(checkStandalone);
+
+    const ua = (window.navigator.userAgent || '').toLowerCase();
+    setIsIos(/iphone|ipad|ipod/.test(ua) && !window.MSStream);
+
+    const handlePrompt = (e) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+
+    window.addEventListener('beforeinstallprompt', handlePrompt);
+    return () => window.removeEventListener('beforeinstallprompt', handlePrompt);
+  }, []);
+
+  function handlePwaButtonClick() {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      deferredPrompt.userChoice.then((choice) => {
+        if (choice.outcome === 'accepted') {
+          setDeferredPrompt(null);
+        }
+      });
+    } else {
+      setShowPwaModal(true);
+    }
+  }
 
   function handleQuickDemoLogin(role) {
     const res = loginAsDemoRole(role);
@@ -86,9 +123,19 @@ export default function LoginPage() {
               </p>
             </div>
           </div>
-          <span className="hidden sm:inline text-xs font-bold bg-white/15 px-3 py-1.5 rounded-2xl border border-white/20 backdrop-blur-md">
-            Sistem Absensi Digital
-          </span>
+          {/* Header Action Buttons (Sebelah Kanan): Tombol PWA Icon Download */}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              id="btn-download-pwa-header"
+              onClick={handlePwaButtonClick}
+              className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl sm:rounded-2xl bg-white/15 hover:bg-emerald-500/90 text-white flex items-center justify-center border border-white/20 backdrop-blur-md shadow-md active:scale-95 transition-all cursor-pointer group"
+              title="Download dan Pasang Aplikasi (PWA)"
+              aria-label="Download dan Pasang Aplikasi PWA"
+            >
+              <Download className="w-4 h-4 sm:w-5 sm:h-5 text-white group-hover:scale-110 transition-transform" />
+            </button>
+          </div>
         </div>
       </header>
 
@@ -175,12 +222,13 @@ export default function LoginPage() {
         </div>
 
         {/* DEMO NOTE BOX (KOTAK CATATAN AKUN DEMO) - TEMA BIRU TERANG */}
-        <div className="glass-card rounded-3xl p-5 shadow-sm border border-slate-200/90 space-y-3">
-          <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+        <div className="glass-card rounded-3xl p-4 sm:p-5 shadow-sm border border-slate-200/90 space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 pb-2 border-b border-slate-100">
             <span className="text-xs font-bold text-slate-700 flex items-center gap-2">
-              <Info className="w-4 h-4 text-blue-600" /> Akun Demo Setiap Role (Klik untuk Pilih)
+              <Info className="w-4 h-4 text-blue-600 shrink-0" />
+              <span>Akun Demo Setiap Role (Klik untuk Pilih)</span>
             </span>
-            <span className="text-[10px] bg-blue-50 text-blue-700 font-bold px-2 py-0.5 rounded-full border border-blue-200">
+            <span className="self-start sm:self-auto text-[10px] bg-blue-50 text-blue-700 font-bold px-2 py-0.5 rounded-full border border-blue-200">
               Pass: password123
             </span>
           </div>
@@ -306,6 +354,19 @@ export default function LoginPage() {
       <footer className="text-center py-4 text-xs text-slate-400 border-t border-slate-200/60">
         © 2026 SMP NEGERI 2 KOTA BANGUN — SIAK Anti-Cheat V4.0 Jamstack
       </footer>
+
+      {/* Modal Download / Pasang PWA */}
+      <PwaDownloadModal
+        isOpen={showPwaModal}
+        onClose={() => setShowPwaModal(false)}
+        deferredPrompt={deferredPrompt}
+        isIos={isIos}
+        isStandalone={isStandalone}
+        onInstalled={() => {
+          setIsStandalone(true);
+          setShowPwaModal(false);
+        }}
+      />
     </div>
   );
 }

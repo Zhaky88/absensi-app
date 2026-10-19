@@ -51,7 +51,27 @@ export default function OrtuDashboard() {
   const ortu = userProfile?.details;
 
   // Active Tab: 'hari_ini' | 'riwayat' | 'izin' | 'prestasi' | 'kontak' | 'pengaturan'
-  const [activeTab, setActiveTab] = useState('hari_ini');
+  const [activeTab, setActiveTab] = useState(() => {
+    try {
+      const hash = window.location.hash;
+      if (hash && hash.startsWith('#tab=')) {
+        const tabFromHash = decodeURIComponent(hash.replace('#tab=', ''));
+        if (tabFromHash) return tabFromHash;
+      }
+      return localStorage.getItem('siak_active_tab_ortu') || 'hari_ini';
+    } catch (e) {
+      return 'hari_ini';
+    }
+  });
+
+  useEffect(() => {
+    if (activeTab) {
+      try {
+        localStorage.setItem('siak_active_tab_ortu', activeTab);
+        window.history.replaceState(null, '', `#tab=${encodeURIComponent(activeTab)}`);
+      } catch (e) {}
+    }
+  }, [activeTab]);
 
   // Daftar Anak yang Terhubung ke Akun Ortu (Multi-Anak Support)
   const [childrenList, setChildrenList] = useState([
@@ -138,7 +158,7 @@ export default function OrtuDashboard() {
   const [attendance, setAttendance] = useState([
     { id_absensi: '1', tanggal: '2026-10-17', waktu: '07:15', status: 'H', jadwal: { mata_pelajaran: { nama_mapel: 'Informatika' } } },
     { id_absensi: '2', tanggal: '2026-10-16', waktu: '07:10', status: 'H', jadwal: { mata_pelajaran: { nama_mapel: 'Matematika' } } },
-    { id_absensi: '3', tanggal: '2026-10-15', waktu: '07:42', status: 'T', keterangan: 'Terlambat 12 menit', jadwal: { mata_pelajaran: { nama_mapel: 'B. Indonesia' } } },
+    { id_absensi: '3', tanggal: '2026-10-15', waktu: '07:12', status: 'H', keterangan: 'Hadir', jadwal: { mata_pelajaran: { nama_mapel: 'B. Indonesia' } } },
     { id_absensi: '4', tanggal: '2026-10-14', waktu: '07:05', status: 'H', jadwal: { mata_pelajaran: { nama_mapel: 'IPA Terpadu' } } },
     { id_absensi: '5', tanggal: '2026-10-13', waktu: '07:18', status: 'H', jadwal: { mata_pelajaran: { nama_mapel: 'Bahasa Inggris' } } },
     { id_absensi: '6', tanggal: '2026-10-10', waktu: '07:10', status: 'H', jadwal: { mata_pelajaran: { nama_mapel: 'Pendidikan Agama' } } },
@@ -243,27 +263,22 @@ export default function OrtuDashboard() {
     let sakit = 0;
     let izin = 0;
     let alpa = 0;
-    let terlambat = 0;
 
     attendance.forEach((r) => {
       if (r.status === 'H') hadir++;
-      else if (r.status === 'T') {
-        hadir++;
-        terlambat++;
-      } else if (r.status === 'S') sakit++;
+      else if (r.status === 'S') sakit++;
       else if (r.status === 'I') izin++;
       else if (r.status === 'A') alpa++;
     });
 
     const totalHari = hadir + sakit + izin + alpa;
-    const percentage = totalHari > 0 ? Math.round((hadir / totalHari) * 100) : 100;
+    const percentage = totalHari > 0 ? Math.round((hadir / totalHari) * 100) : 0;
 
     return {
       hadir,
       sakit,
       izin,
       alpa,
-      terlambat,
       totalHari,
       percentage,
     };
@@ -533,7 +548,7 @@ export default function OrtuDashboard() {
       <header className="bg-slate-900 text-white shadow-md sticky top-0 z-40 border-b border-slate-800">
         <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
           {/* Logo Sekolah */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
             <div className="w-10 h-10 sm:w-11 sm:h-11 bg-white/10 rounded-2xl p-1 flex items-center justify-center border border-white/15 shrink-0">
               <img
                 src={schoolSettings.sekolah_logo || 'https://placehold.co/100x100/1e3a8a/ffffff?text=SMPN2'}
@@ -541,11 +556,11 @@ export default function OrtuDashboard() {
                 className="w-full h-full object-contain rounded-xl"
               />
             </div>
-            <div>
-              <h1 className="font-black text-xs sm:text-sm tracking-tight leading-tight">
+            <div className="min-w-0 flex-1">
+              <h1 className="font-black text-xs sm:text-sm tracking-tight leading-tight truncate">
                 {schoolSettings.sekolah_nama}
               </h1>
-              <p className="text-[10px] sm:text-[11px] text-blue-400 font-medium">
+              <p className="text-[10px] sm:text-[11px] text-blue-400 font-medium truncate">
                 Portal Resmi Orang Tua & Wali Murid
               </p>
             </div>
@@ -829,8 +844,8 @@ export default function OrtuDashboard() {
                 <span className="text-2xl font-black text-emerald-600 mt-1 block">
                   {summaryStats.hadir} <span className="text-xs text-slate-500 font-normal">Hari</span>
                 </span>
-                <span className="text-[10px] text-slate-500 font-medium block mt-0.5">
-                  Terlambat: {summaryStats.terlambat}x
+                <span className="text-[10px] text-emerald-600 font-semibold block mt-0.5">
+                  Tepat Waktu & Hadir
                 </span>
               </div>
 
@@ -900,9 +915,8 @@ export default function OrtuDashboard() {
                   >
                     <option value="semua">Semua Status</option>
                     <option value="H">Hadir</option>
-                    <option value="T">Terlambat</option>
-                    <option value="I">Izin</option>
                     <option value="S">Sakit</option>
+                    <option value="I">Izin</option>
                     <option value="A">Alpa</option>
                   </select>
                 </div>
@@ -932,17 +946,15 @@ export default function OrtuDashboard() {
                       className={`px-2.5 py-1 rounded-xl text-xs font-black ${
                         att.status === 'H'
                           ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                          : att.status === 'T'
-                          ? 'bg-amber-100 text-amber-800 border border-amber-300'
-                          : att.status === 'S' || att.status === 'I'
+                          : att.status === 'S'
                           ? 'bg-blue-100 text-blue-800 border border-blue-300'
+                          : att.status === 'I'
+                          ? 'bg-sky-100 text-sky-800 border border-sky-300'
                           : 'bg-rose-100 text-rose-800 border border-rose-300'
                       }`}
                     >
                       {att.status === 'H'
                         ? 'Hadir'
-                        : att.status === 'T'
-                        ? 'Terlambat'
                         : att.status === 'S'
                         ? 'Sakit'
                         : att.status === 'I'
@@ -1290,7 +1302,7 @@ export default function OrtuDashboard() {
                         Nomor WhatsApp Penerima Notifikasi Otomatis
                       </h3>
                       <p className="text-xs text-slate-500">
-                        Sistem sekolah otomatis mengirimkan laporan presensi, keterlambatan, dan pencapaian siswa
+                        Sistem sekolah otomatis mengirimkan laporan presensi dan pencapaian kehadiran siswa
                       </p>
                     </div>
                   </div>
@@ -1471,7 +1483,7 @@ export default function OrtuDashboard() {
       </main>
 
       {/* ========================================================= */}
-      {/* 4. MODALS CETAK RAPOR PDF & PIAGAM PRESTASI               */}
+      {/* 4. MODALS CETAK RAPOR PDF                                 */}
       {/* ========================================================= */}
       {isPdfModalOpen && (
         <StudentAttendancePdfModal

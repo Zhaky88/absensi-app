@@ -27,7 +27,8 @@ import {
   Radio,
   ExternalLink,
   ShieldCheck,
-  Briefcase
+  Briefcase,
+  Grid
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { supabase } from '../lib/supabase';
@@ -45,6 +46,7 @@ export default function AdminLaporanCenter({
   invalAssignments = [],
   onOpenClassReport,
   onOpenStudentPdf,
+  onOpenTeacherSchedule,
 }) {
   const { toast, showAlert } = useToast();
   const [subTab, setSubTab] = useState('live'); // 'live' | 'makro' | 'ews' | 'guru' | 'jurnal_kbm' | 'siswa_pdf'
@@ -67,8 +69,8 @@ export default function AdminLaporanCenter({
   // Filter & Search Controls
   const [searchStudentTerm, setSearchStudentTerm] = useState('');
   const [filterClassStudent, setFilterClassStudent] = useState('all');
-  const [liveFilterStatus, setLiveFilterStatus] = useState('all'); // 'all' | 'alpa' | 'terlambat' | 'izin_sakit' | 'hadir'
-  const [ewsFilterType, setEwsFilterType] = useState('all'); // 'all' | 'alpa' | 'terlambat'
+  const [liveFilterStatus, setLiveFilterStatus] = useState('all'); // 'all' | 'alpa' | 'izin_sakit' | 'hadir'
+  const [ewsFilterType, setEwsFilterType] = useState('all'); // 'all' | 'alpa'
 
   // Surat Panggilan Modal State
   const [selectedStudentForSummons, setSelectedStudentForSummons] = useState(null);
@@ -77,6 +79,18 @@ export default function AdminLaporanCenter({
   // Modal Jurnal KBM Guru
   const [isJurnalModalOpen, setIsJurnalModalOpen] = useState(false);
   const [selectedTeacherForJurnal, setSelectedTeacherForJurnal] = useState(null);
+
+  // Sync body class for print isolation
+  useEffect(() => {
+    if (isSummonsModalOpen) {
+      document.body.classList.add('print-modal-open');
+    } else {
+      document.body.classList.remove('print-modal-open');
+    }
+    return () => {
+      document.body.classList.remove('print-modal-open');
+    };
+  }, [isSummonsModalOpen]);
 
   const monthNames = [
     'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
@@ -198,7 +212,7 @@ export default function AdminLaporanCenter({
         izin: 0,
         alpa: 0,
         totalEntries: 0,
-        percentage: 100,
+        percentage: 0,
       };
     });
 
@@ -206,7 +220,7 @@ export default function AdminLaporanCenter({
       const classId = att.siswa?.id_kelas;
       if (classId && classMap[classId]) {
         const status = (att.status || '').toUpperCase();
-        if (status === 'H' || status === 'T') classMap[classId].hadir++;
+        if (status === 'H') classMap[classId].hadir++;
         else if (status === 'S') classMap[classId].sakit++;
         else if (status === 'I') classMap[classId].izin++;
         else if (status === 'A') classMap[classId].alpa++;
@@ -216,7 +230,7 @@ export default function AdminLaporanCenter({
 
     const summaries = Object.values(classMap).map((c) => {
       const totalAll = c.hadir + c.sakit + c.izin + c.alpa;
-      const pct = totalAll > 0 ? Math.round((c.hadir / totalAll) * 100) : 95;
+      const pct = totalAll > 0 ? Math.round((c.hadir / totalAll) * 100) : 0;
       return { ...c, percentage: pct };
     });
 
@@ -237,14 +251,14 @@ export default function AdminLaporanCenter({
         izin: 0,
         alpa: 0,
         total: 0,
-        percentage: 100,
+        percentage: 0,
       };
     });
 
     attList.forEach((att) => {
       if (studentCounters[att.nis]) {
         const status = (att.status || '').toUpperCase();
-        if (status === 'H' || status === 'T') studentCounters[att.nis].hadir++;
+        if (status === 'H') studentCounters[att.nis].hadir++;
         else if (status === 'S') studentCounters[att.nis].sakit++;
         else if (status === 'I') studentCounters[att.nis].izin++;
         else if (status === 'A') studentCounters[att.nis].alpa++;
@@ -256,7 +270,7 @@ export default function AdminLaporanCenter({
     const riskStudents = [];
     Object.values(studentCounters).forEach((item) => {
       const total = item.hadir + item.sakit + item.izin + item.alpa;
-      const pct = total > 0 ? Math.round((item.hadir / total) * 100) : 100;
+      const pct = total > 0 ? Math.round((item.hadir / total) * 100) : 0;
       item.percentage = pct;
 
       const hasAlpaRisk = item.alpa >= 3;
@@ -289,9 +303,6 @@ export default function AdminLaporanCenter({
       } else if (idx % 7 === 0) {
         st = 'S';
         ket = 'Sakit Demam (Izin Ortu)';
-      } else if (idx % 9 === 0) {
-        st = 'T';
-        ket = 'Terlambat 15 menit';
       } else if (idx % 13 === 0) {
         st = 'I';
         ket = 'Acara Keluarga';
@@ -300,7 +311,7 @@ export default function AdminLaporanCenter({
         id_absensi: `today-${s.nis}`,
         nis: s.nis,
         status: st,
-        waktu: st === 'T' ? '07:22:15' : '07:02:40',
+        waktu: '07:02:40',
         tanggal: todayStr,
         keterangan: ket,
         metode: 'qr_siswa',
@@ -325,9 +336,6 @@ export default function AdminLaporanCenter({
         if (sIdx === 0 && dIdx % 3 === 0) {
           status = 'A';
           ket = 'Alpa (Tanpa Keterangan)';
-        } else if (sIdx === 1 && dIdx % 4 === 0) {
-          status = 'T';
-          ket = 'Terlambat masuk kelas';
         } else if ((sIdx + dIdx) % 15 === 0) {
           status = 'S';
           ket = 'Sakit';
@@ -355,7 +363,7 @@ export default function AdminLaporanCenter({
     let hadir = 0, sakit = 0, izin = 0, alpa = 0;
     todayAttendance.forEach((item) => {
       const s = (item.status || '').toUpperCase();
-      if (s === 'H' || s === 'T') hadir++;
+      if (s === 'H') hadir++;
       else if (s === 'S') sakit++;
       else if (s === 'I') izin++;
       else if (s === 'A') alpa++;
@@ -371,7 +379,7 @@ export default function AdminLaporanCenter({
     if (liveFilterStatus === 'all') return true;
     if (liveFilterStatus === 'alpa') return s === 'A';
     if (liveFilterStatus === 'izin_sakit') return s === 'I' || s === 'S';
-    if (liveFilterStatus === 'hadir') return s === 'H' || s === 'T';
+    if (liveFilterStatus === 'hadir') return s === 'H';
     return true;
   });
 
@@ -427,7 +435,7 @@ export default function AdminLaporanCenter({
         NIS: item.nis,
         Nama_Siswa: item.siswa?.nama || '-',
         Kelas: item.siswa?.kelas?.nama_kelas || item.siswa?.id_kelas || '-',
-        Status: item.status === 'H' || item.status === 'T' ? 'Hadir' : item.status === 'I' ? 'Izin' : item.status === 'S' ? 'Sakit' : 'Alpa',
+        Status: item.status === 'H' ? 'Hadir' : item.status === 'I' ? 'Izin' : item.status === 'S' ? 'Sakit' : 'Alpa',
         Keterangan: item.keterangan || '-',
       }));
 
@@ -484,7 +492,7 @@ export default function AdminLaporanCenter({
               </h1>
             </div>
             <p className="text-xs text-slate-500">
-              Pantau kehadiran real-time harian, komparasi disiplin antar rombel, deteksi dini siswa bermasalah (BK), serta cetak Rapor Presensi PDF resmi berstandar Kop Sekolah.
+              Pantau kehadiran real-time harian, komparasi disiplin antar kelas, deteksi dini siswa bermasalah (BK), serta cetak Rapor Presensi PDF resmi berstandar Kop Sekolah.
             </p>
           </div>
 
@@ -537,7 +545,7 @@ export default function AdminLaporanCenter({
             <Award className="w-4 h-4 text-amber-300" />
             <span>Komparasi Antar Kelas & Ranking</span>
             <span className="ml-1 text-[10px] px-1.5 py-0.2 bg-white/20 rounded-full font-mono">
-              {classes.length} Rombel
+              {classes.length} Kelas
             </span>
           </button>
 
@@ -686,8 +694,8 @@ export default function AdminLaporanCenter({
             </div>
 
             {/* Tabel Live Feed */}
-            <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
-              <table className="w-full text-left text-xs border-collapse">
+            <div className="border border-slate-200 rounded-2xl overflow-x-auto shadow-xs pb-1">
+              <table className="w-full text-left text-xs border-collapse min-w-[750px]">
                 <thead>
                   <tr className="bg-slate-50 border-b border-slate-200 text-slate-700 font-bold">
                     <th className="py-3 px-3 text-center w-10">No</th>
@@ -718,7 +726,7 @@ export default function AdminLaporanCenter({
                           <td className="py-2.5 px-3 text-center">
                             <span
                               className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                st === 'H' || st === 'T'
+                                st === 'H'
                                   ? 'bg-emerald-100 text-emerald-700'
                                   : st === 'S'
                                   ? 'bg-blue-100 text-blue-700'
@@ -727,7 +735,7 @@ export default function AdminLaporanCenter({
                                   : 'bg-rose-100 text-rose-700'
                               }`}
                             >
-                              {st === 'H' || st === 'T' ? 'Hadir' : st === 'S' ? 'Sakit' : st === 'I' ? 'Izin' : 'Alpa'}
+                              {st === 'H' ? 'Hadir' : st === 'S' ? 'Sakit' : st === 'I' ? 'Izin' : 'Alpa'}
                             </span>
                           </td>
                           <td className="py-2.5 px-3 text-center font-mono text-slate-600 text-[11px]">
@@ -892,7 +900,7 @@ export default function AdminLaporanCenter({
             <div className="glass-card rounded-3xl p-6 border border-slate-200">
               <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 mb-4">
                 <Award className="w-5 h-5 text-amber-500" />
-                Podium Rombel Terdisiplin (Tingkat Kehadiran Tertinggi)
+                Podium Kelas Terdisiplin (Tingkat Kehadiran Tertinggi)
               </h3>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -949,15 +957,15 @@ export default function AdminLaporanCenter({
           <div className="glass-card rounded-3xl p-6 border border-slate-200">
             <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 mb-4">
               <School className="w-5 h-5 text-blue-600" />
-              Tabel Komparasi Seluruh Rombel Sekolah
+              Tabel Komparasi Seluruh Kelas Sekolah
             </h3>
 
-            <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
-              <table className="w-full text-left text-xs border-collapse">
+            <div className="border border-slate-200 rounded-2xl overflow-x-auto shadow-xs pb-1">
+              <table className="w-full text-left text-xs border-collapse min-w-[750px]">
                 <thead>
                   <tr className="bg-slate-50 border-b border-slate-200 text-slate-700 font-bold">
                     <th className="py-3 px-3 text-center w-12">Rank</th>
-                    <th className="py-3 px-3">Nama Rombel</th>
+                    <th className="py-3 px-3">Nama Kelas</th>
                     <th className="py-3 px-3">Wali Kelas</th>
                     <th className="py-3 px-3 text-center">Siswa</th>
                     <th className="py-3 px-3 text-center text-emerald-700">Hadir</th>
@@ -1002,7 +1010,7 @@ export default function AdminLaporanCenter({
                               if (foundClass && onOpenClassReport) onOpenClassReport(foundClass);
                             }}
                             className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold rounded-lg text-[11px] transition-colors cursor-pointer"
-                            title="Buka Rekapitulasi Rombel ini"
+                            title="Buka Rekapitulasi Kelas ini"
                           >
                             Rekap Kelas
                           </button>
@@ -1012,7 +1020,7 @@ export default function AdminLaporanCenter({
                               if (onOpenStudentPdf) onOpenStudentPdf(firstStudent || null);
                             }}
                             className="p-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors cursor-pointer"
-                            title="Cetak Rapor PDF Siswa Rombel Ini"
+                            title="Cetak Rapor PDF Siswa Kelas Ini"
                           >
                             <Printer className="w-3.5 h-3.5" />
                           </button>
@@ -1042,7 +1050,7 @@ export default function AdminLaporanCenter({
                   Radar Early Warning System (EWS) Kesiswaan & Bimbingan Konseling (BK)
                 </h3>
                 <p className="text-xs text-rose-700 mt-0.5">
-                  Sistem otomatis mendeteksi siswa yang berisiko drop-out atau memerlukan pembinaan khusus akibat akumulasi Alpa (≥ 3 kali), sering terlambat, atau kehadiran di bawah 80%.
+                  Sistem otomatis mendeteksi siswa yang berisiko drop-out atau memerlukan pembinaan khusus akibat akumulasi Alpa (≥ 3 kali) atau kehadiran di bawah 80%.
                 </p>
               </div>
             </div>
@@ -1169,18 +1177,43 @@ export default function AdminLaporanCenter({
       {subTab === 'guru' && (
         <div className="space-y-6">
           <div className="glass-card rounded-3xl p-6 border border-slate-200 space-y-4">
-            <div>
-              <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
-                <Briefcase className="w-5 h-5 text-indigo-600" />
-                Rekap Realisasi KBM Guru & Akumulasi Jam Inval (Guru Pengganti)
-              </h3>
-              <p className="text-xs text-slate-500 mt-1">
-                Transparansi jam mengajar guru, kehadiran harian, serta jam piket pengganti untuk evaluasi kinerja & insentif piket sekolah.
-              </p>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
+                  <Briefcase className="w-5 h-5 text-indigo-600" />
+                  Rekap Realisasi KBM Guru & Akumulasi Jam Inval (Guru Pengganti)
+                </h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  Transparansi jam mengajar guru, kehadiran harian, serta jam piket pengganti untuk evaluasi kinerja & insentif piket sekolah.
+                </p>
+              </div>
+
+              {onOpenTeacherSchedule && (
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => onOpenTeacherSchedule(null, 'all_individual')}
+                    className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
+                    title="Cetak lembar jadwal untuk seluruh guru sekaligus (1 lembar per guru dengan auto page-break)"
+                  >
+                    <Users className="w-4 h-4" />
+                    <span>Cetak Massal Seluruh Guru</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onOpenTeacherSchedule(null, 'master_matrix')}
+                    className="px-3.5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-all cursor-pointer"
+                    title="Cetak Master Matriks Rekapitulasi Jadwal Seluruh Guru (A4 Landscape & Excel)"
+                  >
+                    <Grid className="w-4 h-4" />
+                    <span>Master Matriks</span>
+                  </button>
+                </div>
+              )}
             </div>
 
-            <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
-              <table className="w-full text-left text-xs border-collapse">
+            <div className="border border-slate-200 rounded-2xl overflow-x-auto shadow-xs pb-1">
+              <table className="w-full text-left text-xs border-collapse min-w-[750px]">
                 <thead>
                   <tr className="bg-slate-50 border-b border-slate-200 text-slate-700 font-bold">
                     <th className="py-3 px-3 text-center w-10">No</th>
@@ -1190,11 +1223,14 @@ export default function AdminLaporanCenter({
                     <th className="py-3 px-3 text-center">Jadwal Sesi/Minggu</th>
                     <th className="py-3 px-3 text-center text-indigo-700 font-bold">Jam Inval (Menggantikan)</th>
                     <th className="py-3 px-3 text-center">Status Hari Ini</th>
+                    <th className="py-3 px-3 text-right">Aksi</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
                   {teachers.map((t, idx) => {
-                    const teacherSchedules = schedules.filter((s) => s.nip === t.nip);
+                    const teacherSchedules = schedules.filter(
+                      (s) => s.nip === t.nip || s.id_guru === t.nip || s.guru?.nama === t.nama
+                    );
                     const invalCount = (invalAssignments || []).filter(
                       (inv) => inv.guru_pengganti_nip === t.nip || inv.guru_pengganti_nama === t.nama
                     ).length;
@@ -1208,7 +1244,7 @@ export default function AdminLaporanCenter({
                           {t.mata_pelajaran || t.mapel || 'Guru Mata Pelajaran'}
                         </td>
                         <td className="py-3 px-3 text-center font-bold text-slate-800">
-                          {teacherSchedules.length || 4} Sesi
+                          {teacherSchedules.length} Sesi
                         </td>
                         <td className="py-3 px-3 text-center">
                           <span className={`inline-block px-2.5 py-0.5 rounded-full font-bold text-xs ${
@@ -1221,6 +1257,19 @@ export default function AdminLaporanCenter({
                           <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
                             Aktif Mengajar
                           </span>
+                        </td>
+                        <td className="py-3 px-3 text-right">
+                          {onOpenTeacherSchedule && (
+                            <button
+                              type="button"
+                              onClick={() => onOpenTeacherSchedule(t)}
+                              className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg transition-colors cursor-pointer inline-flex items-center gap-1.5 text-[11px] font-bold border border-indigo-200"
+                              title="Cetak Lembar Jadwal Guru Resmi (PDF & Excel)"
+                            >
+                              <Printer className="w-3.5 h-3.5" />
+                              <span className="hidden sm:inline">Cetak Jadwal</span>
+                            </button>
+                          )}
                         </td>
                       </tr>
                     );
@@ -1281,8 +1330,8 @@ export default function AdminLaporanCenter({
             </div>
 
             {/* Tabel Daftar Guru untuk Rekap Agenda */}
-            <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
-              <table className="w-full text-left text-xs border-collapse">
+            <div className="border border-slate-200 rounded-2xl overflow-x-auto shadow-xs pb-1">
+              <table className="w-full text-left text-xs border-collapse min-w-[720px]">
                 <thead>
                   <tr className="bg-slate-50 border-b border-slate-200 text-slate-700 font-bold">
                     <th className="py-3 px-3 text-center w-10">No</th>
@@ -1354,11 +1403,11 @@ export default function AdminLaporanCenter({
                   Cetak Rapor Presensi & Lembar Kedisiplinan Siswa (PDF)
                 </h3>
                 <p className="text-xs text-slate-500 mt-1">
-                  Pilih siswa atau rombel untuk pratinjau dan unduh berkas Rapor Presensi Resmi siap simpan PDF atau cetak fisik.
+                  Pilih siswa atau kelas untuk pratinjau dan unduh berkas Rapor Presensi Resmi siap simpan PDF atau cetak fisik.
                 </p>
               </div>
 
-              {/* Opsi Cetak Rombel Sekaligus */}
+              {/* Opsi Cetak Kelas Sekaligus */}
               <button
                 onClick={() => onOpenStudentPdf(students[0] || null)}
                 className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl flex items-center gap-2 shadow-sm transition-all cursor-pointer"
@@ -1387,7 +1436,7 @@ export default function AdminLaporanCenter({
                   onChange={(e) => setFilterClassStudent(e.target.value)}
                   className="w-full sm:w-auto text-xs bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 font-bold text-slate-700"
                 >
-                  <option value="all">Semua Rombel</option>
+                  <option value="all">Semua Kelas</option>
                   {classes.map((c) => (
                     <option key={c.id_kelas} value={c.id_kelas}>
                       {c.nama_kelas}
@@ -1398,8 +1447,8 @@ export default function AdminLaporanCenter({
             </div>
 
             {/* Tabel Siswa Ready for PDF */}
-            <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
-              <table className="w-full text-left text-xs border-collapse">
+            <div className="border border-slate-200 rounded-2xl overflow-x-auto shadow-xs pb-1">
+              <table className="w-full text-left text-xs border-collapse min-w-[680px]">
                 <thead>
                   <tr className="bg-slate-50 border-b border-slate-200 text-slate-700 font-bold">
                     <th className="py-3 px-3 text-center w-10">No</th>
@@ -1460,21 +1509,109 @@ export default function AdminLaporanCenter({
       {/* 7. MODAL SURAT PANGGILAN ORANG TUA RESMI (PRINTABLE FORMAT)               */}
       {/* ========================================================================= */}
       {isSummonsModalOpen && selectedStudentForSummons && (
-        <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex flex-col items-center justify-start p-4 overflow-y-auto print:p-0 print:bg-white print:static">
-          <div className="w-full max-w-3xl bg-white rounded-2xl shadow-xl p-4 mb-4 flex items-center justify-between print:hidden">
+        <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex flex-col items-center justify-start p-4 overflow-y-auto print:p-0 print:bg-white print:static print:overflow-visible">
+          {/* Scoped Media Print Stylesheet */}
+          <style>{`
+            @media print {
+              @page {
+                size: A4 portrait;
+                margin: 8mm 12mm;
+              }
+              body {
+                background: #ffffff !important;
+                color: #000000 !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+              }
+              body * {
+                visibility: hidden;
+              }
+              #printArea, #printArea * {
+                visibility: visible;
+              }
+              #printArea {
+                position: relative !important;
+                left: 0 !important;
+                top: 0 !important;
+                width: 100% !important;
+                max-width: 100% !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                zoom: 91% !important;
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
+                page-break-after: avoid !important;
+                break-after: avoid !important;
+              }
+              .signature-block {
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
+              }
+              .no-print, [data-no-print="true"] {
+                display: none !important;
+              }
+            }
+          `}</style>
+
+          <div className="w-full max-w-3xl bg-white rounded-2xl shadow-xl p-4 mb-4 flex items-center justify-between print:hidden no-print">
             <h3 className="font-bold text-slate-800 flex items-center gap-2">
               <FileText className="w-5 h-5 text-rose-600" /> Pratinjau Surat Panggilan Orang Tua Resmi
             </h3>
             <div className="flex items-center gap-2">
               <button
-                onClick={() => window.print()}
+                onClick={() => {
+                  if (!selectedStudentForSummons) {
+                    toast.error('Data siswa panggilan tidak valid.');
+                    return;
+                  }
+                  const printEl = document.getElementById('printArea');
+                  if (!printEl) {
+                    window.print();
+                    return;
+                  }
+                  const studentName = (selectedStudentForSummons.nama || 'Siswa').replace(/[^a-zA-Z0-9]/g, '_');
+                  const htmlContent = `<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <title>Surat_Panggilan_${studentName}</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap');
+    @page { size: A4 portrait; margin: 12mm 15mm; }
+    * { box-sizing: border-box; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+    body { font-family: 'Times New Roman', Times, serif; margin: 0; padding: 16px; font-size: 11pt; color: #000; background: #fff; line-height: 1.5; }
+    .no-print { display: none !important; }
+  </style>
+</head>
+<body>
+  ${printEl.innerHTML}
+</body>
+</html>`;
+                  const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+                  const url = URL.createObjectURL(blob);
+                  window.open(url, '_blank');
+                }}
+                className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl flex items-center gap-1.5 border border-slate-300 transition-all cursor-pointer shadow-sm"
+                title="Buka dokumen di tab baru tanpa batasan margin"
+              >
+                <ExternalLink className="w-4 h-4 text-slate-500" />
+                <span>Buka di Tab Baru</span>
+              </button>
+              <button
+                onClick={() => {
+                  if (!selectedStudentForSummons) {
+                    toast.error('Data siswa panggilan tidak valid.');
+                    return;
+                  }
+                  setTimeout(() => window.print(), 150);
+                }}
                 className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 cursor-pointer shadow-sm"
               >
                 <Printer className="w-4 h-4" /> Cetak Surat (PDF)
               </button>
               <button
                 onClick={() => setIsSummonsModalOpen(false)}
-                className="p-2 text-slate-400 hover:text-slate-600 rounded-xl"
+                className="p-2 text-slate-400 hover:text-slate-600 rounded-xl cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -1482,7 +1619,10 @@ export default function AdminLaporanCenter({
           </div>
 
           {/* Surat Panggilan Sheet */}
-          <div className="w-full max-w-3xl bg-white p-10 font-serif text-slate-900 shadow-2xl rounded-2xl print:rounded-none print:shadow-none print:p-0">
+          <div
+            id="printArea"
+            className="printable-summons printable-area w-full max-w-3xl bg-white p-6 sm:p-10 font-serif text-slate-900 shadow-2xl rounded-2xl print:rounded-none print:shadow-none print:p-0"
+          >
             {/* Kop Surat */}
             <div className="border-b-[3px] border-slate-900 pb-3 mb-1 text-center font-sans flex items-center justify-between gap-4">
               <div className="w-16 h-16 flex-shrink-0 flex items-center justify-center">
@@ -1554,7 +1694,7 @@ export default function AdminLaporanCenter({
                 Demikian surat panggilan ini kami sampaikan. Atas perhatian dan kerja sama yang baik dari Bapak/Ibu, kami ucapkan terima kasih.
               </p>
 
-              <div className="grid grid-cols-2 gap-4 pt-8 text-center">
+              <div className="grid grid-cols-2 gap-4 pt-8 text-center signature-block break-inside-avoid">
                 <div>
                   <p className="mb-16">Guru Bimbingan Konseling (BK)</p>
                   <p className="font-bold underline">Ibu Dra. Hj. Siti Maryam, M.Si</p>

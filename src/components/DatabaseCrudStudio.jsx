@@ -76,10 +76,10 @@ const TABLE_DEFINITIONS = [
   },
   {
     id: 'kelas',
-    label: 'Rombongan Belajar (Kelas)',
+    label: 'Kelas',
     icon: Layers,
     pk: 'id_kelas',
-    description: 'Daftar kelas rombel, tingkat (7-9 SMP), dan guru wali kelas.',
+    description: 'Daftar data kelas, tingkat (7-9 SMP), dan guru wali kelas.',
     columns: [
       { key: 'id_kelas', label: 'ID Kelas (UUID)', type: 'uuid', isPk: true, autoGen: true },
       { key: 'nama_kelas', label: 'Nama Kelas', type: 'text', required: true },
@@ -131,7 +131,7 @@ const TABLE_DEFINITIONS = [
       { key: 'id_jadwal', label: 'ID Jadwal', type: 'fk', refTable: 'jadwal', refKey: 'id_jadwal', refLabel: 'hari' },
       { key: 'tanggal', label: 'Tanggal', type: 'date', required: true },
       { key: 'waktu', label: 'Waktu Scan', type: 'time', required: true },
-      { key: 'status', label: 'Status', type: 'select', options: ['H', 'S', 'I', 'A', 'T'], required: true },
+      { key: 'status', label: 'Status', type: 'select', options: ['H', 'S', 'I', 'A'], required: true },
       { key: 'metode', label: 'Metode', type: 'select', options: ['murid_scan', 'guru_scan', 'manual', 'piket_scan'], default: 'murid_scan' },
       { key: 'keterangan', label: 'Keterangan / Alasan', type: 'text' },
       { key: 'foto_bukti_izin', label: 'Bukti Foto Surat', type: 'text' },
@@ -707,8 +707,8 @@ export default function DatabaseCrudStudio() {
         {/* ========================================================================= */}
         {/* 3. DYNAMIC DATA TABLE                                                    */}
         {/* ========================================================================= */}
-        <div className="border border-slate-200 rounded-2xl overflow-x-auto shadow-xs">
-          <table className="w-full text-left text-xs border-collapse">
+        <div className="border border-slate-200 rounded-2xl overflow-x-auto shadow-xs pb-1">
+          <table className="w-full min-w-[800px] text-left text-xs border-collapse">
             <thead>
               <tr className="bg-slate-50/90 border-b border-slate-200 text-slate-700 font-bold">
                 <th className="py-3 px-3 text-center w-12">No</th>

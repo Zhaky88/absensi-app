@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { supabase, getUserMetadataAndRole } from '../lib/supabase';
+import { logActivity } from '../lib/activityLogger';
 
 const AuthContext = createContext(null);
 
@@ -52,9 +53,58 @@ export function getAdminProfileDetails() {
 }
 
 export function AuthProvider({ children }) {
-  const [session, setSession] = useState(null);
-  const [userProfile, setUserProfile] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [session, setSessionState] = useState(() => {
+    try {
+      const saved = localStorage.getItem('siak_active_session');
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) {
+      return null;
+    }
+  });
+
+  const [userProfile, setUserProfileState] = useState(() => {
+    try {
+      const saved = localStorage.getItem('siak_active_user_profile');
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) {
+      return null;
+    }
+  });
+
+  const [loading, setLoading] = useState(() => {
+    try {
+      const savedSession = localStorage.getItem('siak_active_session');
+      const savedProfile = localStorage.getItem('siak_active_user_profile');
+      return !(savedSession && savedProfile);
+    } catch (e) {
+      return true;
+    }
+  });
+
+  const setSession = (newSession) => {
+    setSessionState(newSession);
+    try {
+      if (newSession) {
+        localStorage.setItem('siak_active_session', JSON.stringify(newSession));
+      } else {
+        localStorage.removeItem('siak_active_session');
+      }
+    } catch (e) {}
+  };
+
+  const setUserProfile = (profileOrFn) => {
+    setUserProfileState((prev) => {
+      const updated = typeof profileOrFn === 'function' ? profileOrFn(prev) : profileOrFn;
+      try {
+        if (updated) {
+          localStorage.setItem('siak_active_user_profile', JSON.stringify(updated));
+        } else {
+          localStorage.removeItem('siak_active_user_profile');
+        }
+      } catch (e) {}
+      return updated;
+    });
+  };
 
   const isSupabaseConfigured = Boolean(
     import.meta.env.VITE_SUPABASE_URL &&
@@ -69,12 +119,19 @@ export function AuthProvider({ children }) {
       return;
     }
 
-    // 1. Ambil session saat ini
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (session?.user) {
-        loadUserProfile(session.user.id);
+    // 1. Ambil session saat ini dari Supabase Auth
+    supabase.auth.getSession().then(({ data: { session: supaSession } }) => {
+      if (supaSession?.user) {
+        setSession(supaSession);
+        loadUserProfile(supaSession.user.id);
       } else {
+        // Cek apakah ada sesi kustom / demo di localStorage
+        const localSession = localStorage.getItem('siak_active_session');
+        const localProfile = localStorage.getItem('siak_active_user_profile');
+        if (!localSession || !localProfile) {
+          setSession(null);
+          setUserProfile(null);
+        }
         setLoading(false);
       }
     }).catch((err) => {
@@ -83,12 +140,27 @@ export function AuthProvider({ children }) {
     });
 
     // 2. Listener perubahan status autentikasi
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      if (session?.user) {
-        loadUserProfile(session.user.id);
-      } else {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, supaSession) => {
+      if (supaSession?.user) {
+        setSession(supaSession);
+        loadUserProfile(supaSession.user.id);
+      } else if (event === 'SIGNED_OUT') {
+        const localSession = localStorage.getItem('siak_active_session');
+        if (localSession && (localSession.includes('demo-') || localSession.includes('acc-'))) {
+          // Jangan bersihkan sesi demo/kustom jika hanya supabase sign out
+          return;
+        }
+        setSession(null);
         setUserProfile(null);
+        setLoading(false);
+      } else {
+        // Event lain (seperti INITIAL_SESSION saat supaSession null)
+        const localSession = localStorage.getItem('siak_active_session');
+        const localProfile = localStorage.getItem('siak_active_user_profile');
+        if (!localSession || !localProfile) {
+          setSession(null);
+          setUserProfile(null);
+        }
         setLoading(false);
       }
     });
@@ -97,7 +169,6 @@ export function AuthProvider({ children }) {
   }, [isSupabaseConfigured]);
 
   async function loadUserProfile(userId) {
-    setLoading(true);
     const profile = await getUserMetadataAndRole(userId);
     if (profile.success) {
       if (profile.role === 'admin' && !profile.details) {
@@ -310,10 +381,36 @@ export function AuthProvider({ children }) {
 
     setSession({ user: { id: `demo-${role}` } });
     setUserProfile(demoProfiles[role]);
+
+    // Catat log aktivitas login
+    logActivity({
+      role,
+      userId: demoProfiles[role]?.username || `demo-${role}`,
+      userName: demoProfiles[role]?.details?.nama || `Akun Demo ${role}`,
+      action: 'Login Akun Demo',
+      category: 'autentikasi',
+      details: `Login berhasil menggunakan akun demo peranan ${role.toUpperCase()}`,
+      status: 'success',
+    });
+
     return { success: true };
   }
 
   async function logout() {
+    const currentRole = userProfile?.role || 'pengguna';
+    const currentName = userProfile?.details?.nama || userProfile?.username || 'Pengguna';
+    const currentId = userProfile?.username || '-';
+
+    logActivity({
+      role: currentRole,
+      userId: currentId,
+      userName: currentName,
+      action: 'Logout Sistem',
+      category: 'autentikasi',
+      details: `Pengguna ${currentName} mengakhiri sesi akun`,
+      status: 'success',
+    });
+
     if (isSupabaseConfigured) {
       try {
         await supabase.auth.signOut();
@@ -321,6 +418,15 @@ export function AuthProvider({ children }) {
     }
     setSession(null);
     setUserProfile(null);
+    try {
+      localStorage.removeItem('siak_active_session');
+      localStorage.removeItem('siak_active_user_profile');
+      localStorage.removeItem('siak_active_tab_admin');
+      localStorage.removeItem('siak_active_tab_guru');
+      localStorage.removeItem('siak_active_tab_murid');
+      localStorage.removeItem('siak_active_tab_ortu');
+      window.history.replaceState(null, '', window.location.pathname);
+    } catch (e) {}
   }
 
   return (

@@ -457,7 +457,7 @@ export default function ParentAccountsManager({ students = [], classes = [], onR
                 onChange={(e) => setSelectedKelasId(e.target.value)}
                 className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700"
               >
-                <option value="semua">Semua Rombel ({classes.length})</option>
+                <option value="semua">Semua Kelas ({classes.length})</option>
                 {classes.map((c) => (
                   <option key={c.id_kelas} value={c.id_kelas}>
                     {c.nama_kelas}
@@ -516,8 +516,8 @@ export default function ParentAccountsManager({ students = [], classes = [], onR
             <p className="text-[11px] text-slate-400">Coba ubah kata kunci pencarian atau reset filter kelas.</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
+          <div className="overflow-x-auto pb-2">
+            <table className="w-full min-w-[700px] text-left text-xs">
               <thead className="bg-slate-50 text-slate-600 font-bold text-[11px] border-b border-slate-200">
                 <tr>
                   <th className="p-3 w-12 text-center">No</th>

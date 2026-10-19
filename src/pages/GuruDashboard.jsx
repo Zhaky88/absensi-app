@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 import {
@@ -63,8 +63,11 @@ import ClassAttendanceReportModal from '../components/ClassAttendanceReportModal
 import JurnalKbmReportModal from '../components/JurnalKbmReportModal';
 import TeacherScheduleReportModal from '../components/TeacherScheduleReportModal';
 import StudentAchievementModal from '../components/StudentAchievementModal';
-import SchoolCertificateModal from '../components/SchoolCertificateModal';
-import { calculateStudentAchievementsSummary } from '../lib/achievementManager';
+import {
+  calculateStudentAchievementsSummary,
+  sortAndRankStudentsByStreak,
+  calculateStudentLevel,
+} from '../lib/achievementManager';
 import {
   getInvalAssignments,
   saveInvalAssignment,
@@ -79,15 +82,36 @@ export default function GuruDashboard() {
   const { toast, showConfirm } = useToast();
   const guru = userProfile?.details;
 
-  // State Modal Achievement & Piagam Siswa
+  // State Modal Achievement Siswa & Radar Prestasi
   const [selectedStudentForAchievement, setSelectedStudentForAchievement] = useState(null);
-  const [selectedStudentForCert, setSelectedStudentForCert] = useState(null);
-  const [certSummary, setCertSummary] = useState(null);
   const [radarFilterKelas, setRadarFilterKelas] = useState('all');
+  const [radarFilterPeriod, setRadarFilterPeriod] = useState('month'); // 'week' | 'month' | 'semester'
+  const [radarFilterTingkat, setRadarFilterTingkat] = useState('all'); // 'all' | '7' | '8' | '9'
+  const [radarSearchKeyword, setRadarSearchKeyword] = useState('');
 
   // Sidebar & Navigation State (Mirrors Admin Dashboard)
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState('dynamic-qr'); // 'dynamic-qr' | 'scanner' | 'manual' | 'jurnal' | 'jadwal' | 'kalender' | 'wali_kelas' | 'inval' | 'profil'
+  const [activeTab, setActiveTab] = useState(() => {
+    try {
+      const hash = window.location.hash;
+      if (hash && hash.startsWith('#tab=')) {
+        const tabFromHash = decodeURIComponent(hash.replace('#tab=', ''));
+        if (tabFromHash) return tabFromHash;
+      }
+      return localStorage.getItem('siak_active_tab_guru') || 'dynamic-qr';
+    } catch (e) {
+      return 'dynamic-qr';
+    }
+  });
+
+  useEffect(() => {
+    if (activeTab) {
+      try {
+        localStorage.setItem('siak_active_tab_guru', activeTab);
+        window.history.replaceState(null, '', `#tab=${encodeURIComponent(activeTab)}`);
+      } catch (e) {}
+    }
+  }, [activeTab]);
 
   // Identitas & Pengaturan Sekolah (Tersinkronisasi dengan Admin Dashboard)
   const [settings, setSettings] = useState(() => {
@@ -119,11 +143,46 @@ export default function GuruDashboard() {
   const [studentsList, setStudentsList] = useState([]);
   const [classesList, setClassesList] = useState([]);
   const [schedulesList, setSchedulesList] = useState([]);
-  const [todayAttendanceMap, setTodayAttendanceMap] = useState({});
+  const [todayAttendanceList, setTodayAttendanceList] = useState([]);
+
+  // Mengambil status presensi siswa khusus untuk sesi KBM mengajar yang aktif
+  function getStudentAttendance(nis, targetSchedId = null) {
+    if (!todayAttendanceList || todayAttendanceList.length === 0) return null;
+    const schedId = targetSchedId || currentActiveSchedule?.id_jadwal;
+
+    if (schedId) {
+      const exactMatch = todayAttendanceList.find(
+        (a) => a.nis === nis && a.id_jadwal === schedId
+      );
+      if (exactMatch) return exactMatch;
+    }
+
+    const leaveMatch = todayAttendanceList.find(
+      (a) => a.nis === nis && (a.status === 'S' || a.status === 'I' || a.status === 'A')
+    );
+    if (leaveMatch) return leaveMatch;
+
+    return null;
+  }
+
+  // Mengambil status presensi harian siswa untuk ringkasan Wali Kelas
+  function getStudentDailyAttendance(nis) {
+    if (!todayAttendanceList || todayAttendanceList.length === 0) return null;
+    const studentRecords = todayAttendanceList.filter((a) => a.nis === nis);
+    if (studentRecords.length === 0) return null;
+    return (
+      studentRecords.find((a) => a.status === 'H') ||
+      studentRecords.find((a) => a.status === 'S') ||
+      studentRecords.find((a) => a.status === 'I') ||
+      studentRecords[0]
+    );
+  }
 
   // Sesi KBM Mengajar Aktif
   const [selectedScheduleId, setSelectedScheduleId] = useState('');
   const [manualFilterKelasId, setManualFilterKelasId] = useState('');
+  const [manualKeteranganMap, setManualKeteranganMap] = useState({});
+  const [savingAllManual, setSavingAllManual] = useState(false);
   const [isFullscreenProjector, setIsFullscreenProjector] = useState(false);
 
   // Dynamic QR Code State
@@ -523,16 +582,85 @@ export default function GuruDashboard() {
       }
     : schedulesList.find((s) => s.id_jadwal === selectedScheduleId) || mySchedules[0] || null;
 
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [lastSyncTime, setLastSyncTime] = useState(() => new Date());
+
+  // Master Sinkronisasi Seluruh Data Guru dengan Database Supabase & Sistem
+  async function syncAllGuruData(silent = false) {
+    try {
+      if (!silent) setIsSyncing(true);
+
+      await Promise.allSettled([
+        fetchSettings(),
+        fetchStudents(),
+        fetchClasses(),
+        fetchSchedules(),
+        fetchTodayAttendance(),
+        fetchInvalAssignmentsFromCloud().then((res) => {
+          if (res) setInvalAssignments(res);
+        }),
+      ]);
+
+      setLastSyncTime(new Date());
+      if (!silent) {
+        toast.success(
+          'Seluruh data KBM, absensi siswa, dan jadwal mengajar berhasil disinkronkan.',
+          'Data Tersinkronisasi'
+        );
+      }
+    } catch (err) {
+      console.warn('Guru sync notice:', err);
+    } finally {
+      if (!silent) setIsSyncing(false);
+    }
+  }
+
   // Initial Data Fetching
   useEffect(() => {
-    fetchSettings();
-    fetchStudents();
-    fetchClasses();
-    fetchSchedules();
-    fetchTodayAttendance();
-    fetchInvalAssignmentsFromCloud().then((res) => {
-      if (res) setInvalAssignments(res);
-    });
+    syncAllGuruData(true);
+  }, []);
+
+  // Sinkronisasi saat window kembali aktif / fokus
+  useEffect(() => {
+    const handleReactivation = () => {
+      if (document.visibilityState === 'visible') {
+        syncAllGuruData(true);
+      }
+    };
+    window.addEventListener('visibilitychange', handleReactivation);
+    window.addEventListener('focus', handleReactivation);
+    return () => {
+      window.removeEventListener('visibilitychange', handleReactivation);
+      window.removeEventListener('focus', handleReactivation);
+    };
+  }, []);
+
+  // Periodic Auto-Sync setiap 30 detik agar presensi siswa real-time masuk
+  useEffect(() => {
+    const syncInterval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        syncAllGuruData(true);
+      }
+    }, 30000);
+    return () => clearInterval(syncInterval);
+  }, []);
+
+  // Supabase Realtime Channel: Dengarkan perubahan tabel absensi secara langsung
+  useEffect(() => {
+    try {
+      const channel = supabase
+        .channel('rt_guru_attendance')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'absensi' }, () => {
+          fetchTodayAttendance();
+        })
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(channel);
+      };
+    } catch (e) {
+      console.warn('Realtime channel subscription notice:', e);
+    }
   }, []);
 
   async function fetchSettings() {
@@ -595,14 +723,16 @@ export default function GuruDashboard() {
     try {
       const { data } = await supabase
         .from('siswa')
-        .select('nis, nama, foto_wajah, qr_token_pribadi, id_kelas, status_siswa, kelas(nama_kelas)');
+        .select('nis, nama, foto_wajah, qr_token_pribadi, id_kelas, streak_sekarang, streak_tertinggi, xp, total_hadir, status_siswa, kelas(nama_kelas, tingkat)');
       if (data && data.length > 0) {
         setStudentsList(data);
       } else {
         setStudentsList([
-          { nis: '202409001', nama: 'Budi Pratama', qr_token_pribadi: 'TOKEN-BUDI-202409001-SECURE', id_kelas: 'c1', status_siswa: 'aktif' },
-          { nis: '202409002', nama: 'Siti Rahmawati', qr_token_pribadi: 'TOKEN-SITI', id_kelas: 'c1', status_siswa: 'aktif' },
-          { nis: '202409003', nama: 'Ahmad Dahlan', qr_token_pribadi: 'TOKEN-AHMAD', id_kelas: 'c1', status_siswa: 'aktif' },
+          { nis: '202409001', nama: 'Budi Pratama', qr_token_pribadi: 'TOKEN-BUDI-202409001-SECURE', id_kelas: 'c1', streak_sekarang: 14, streak_tertinggi: 18, xp: 750, total_hadir: 24, status_siswa: 'aktif', kelas: { nama_kelas: 'VII-A', tingkat: 7 } },
+          { nis: '202409002', nama: 'Siti Rahmawati', qr_token_pribadi: 'TOKEN-SITI', id_kelas: 'c1', streak_sekarang: 15, streak_tertinggi: 15, xp: 800, total_hadir: 25, status_siswa: 'aktif', kelas: { nama_kelas: 'VII-A', tingkat: 7 } },
+          { nis: '202409003', nama: 'Rian Hidayat', qr_token_pribadi: 'TOKEN-RIAN', id_kelas: 'c2', streak_sekarang: 12, streak_tertinggi: 16, xp: 600, total_hadir: 22, status_siswa: 'aktif', kelas: { nama_kelas: 'VIII-A', tingkat: 8 } },
+          { nis: '202409004', nama: 'Dewi Anggraini', qr_token_pribadi: 'TOKEN-DEWI', id_kelas: 'c1', streak_sekarang: 10, streak_tertinggi: 14, xp: 500, total_hadir: 20, status_siswa: 'aktif', kelas: { nama_kelas: 'VII-A', tingkat: 7 } },
+          { nis: '202409005', nama: 'Fajar Nugroho', qr_token_pribadi: 'TOKEN-FAJAR', id_kelas: 'c3', streak_sekarang: 8, streak_tertinggi: 12, xp: 400, total_hadir: 18, status_siswa: 'aktif', kelas: { nama_kelas: 'IX-A', tingkat: 9 } },
         ]);
       }
     } catch (e) {}
@@ -613,11 +743,7 @@ export default function GuruDashboard() {
       const today = getTodayDateString();
       const { data } = await supabase.from('absensi').select('*').eq('tanggal', today);
       if (data) {
-        const map = {};
-        data.forEach((item) => {
-          map[item.nis] = item;
-        });
-        setTodayAttendanceMap(map);
+        setTodayAttendanceList(data);
       }
     } catch (err) {}
   }
@@ -654,12 +780,15 @@ export default function GuruDashboard() {
     }
   }, [schedulesList, guru]);
 
-  // Sinkronkan filter kelas manual saat sesi jadwal berubah
+  // Sinkronkan filter kelas manual saat sesi jadwal berubah atau fallback ke kelas yang ada
   useEffect(() => {
     if (currentActiveSchedule?.id_kelas) {
       setManualFilterKelasId(currentActiveSchedule.id_kelas);
+    } else if (!manualFilterKelasId && classesList.length > 0) {
+      const defaultId = (waliKelasOf && waliKelasOf.id_kelas) || classesList[0]?.id_kelas;
+      if (defaultId) setManualFilterKelasId(defaultId);
     }
-  }, [currentActiveSchedule]);
+  }, [currentActiveSchedule, classesList, waliKelasOf, manualFilterKelasId]);
 
   // Dynamic QR Code Generator (Terkoneksi ke Sesi KBM)
   useEffect(() => {
@@ -715,53 +844,205 @@ export default function GuruDashboard() {
     }
   }
 
-  // Submit Presensi (Tersambung ke Sesi KBM)
-  async function submitAttendance(nis, status) {
+  // Helper format waktu standar ISO/PostgreSQL "HH:MM:SS" (menghindari tanda titik pemisah pada locale id-ID)
+  function getDbTimeString(includeSeconds = true) {
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const hh = pad(d.getHours());
+    const mm = pad(d.getMinutes());
+    const ss = pad(d.getSeconds());
+    return includeSeconds ? `${hh}:${mm}:${ss}` : `${hh}:${mm}`;
+  }
+
+  // Submit Presensi (Tersambung ke Sesi KBM & Langsung Tersimpan di Database Supabase)
+  async function submitAttendance(nis, status, customKeterangan = undefined) {
     try {
-      const targetSched = currentActiveSchedule;
+      // Prioritaskan jadwal kelas yang sedang aktif atau yang sedang difilter di tab manual
+      const classSched = schedulesList.find(
+        (s) => String(s.id_kelas) === String(manualFilterKelasId) && (s.id_guru === guru?.nip || s.guru?.nama === guru?.nama)
+      );
+      const targetSchedId = (activeTab === 'manual' && classSched?.id_jadwal)
+        ? classSched.id_jadwal
+        : (currentActiveSchedule?.id_jadwal || classSched?.id_jadwal || null);
+
+      // JIKA DIKLIK ULANG STATUS YANG SAMA (dan tidak sedang mengisi keterangan baru): Batalkan presensi (Reset kembali ke Belum Presensi)
+      const currentAtt = getStudentAttendance(nis, targetSchedId) || getStudentDailyAttendance(nis);
+      if (currentAtt && currentAtt.status === status && customKeterangan === undefined) {
+        if (currentAtt.id_absensi && !String(currentAtt.id_absensi).startsWith('temp')) {
+          await supabase.from('absensi').delete().eq('id_absensi', currentAtt.id_absensi);
+        } else {
+          let delQuery = supabase
+            .from('absensi')
+            .delete()
+            .eq('nis', nis)
+            .eq('tanggal', getTodayDateString());
+          if (targetSchedId) {
+            delQuery = delQuery.eq('id_jadwal', targetSchedId);
+          }
+          await delQuery;
+        }
+
+        setTodayAttendanceList((prev) =>
+          prev.filter(
+            (a) => !(a.nis === nis && (targetSchedId ? a.id_jadwal === targetSchedId : true))
+          )
+        );
+
+        toast.info(`Status presensi NIS ${nis} dibatalkan (Belum Presensi)`);
+        setScannedStudent(null);
+        return;
+      }
+
+      // Tentukan keterangan akhir
+      let finalKeterangan = null;
+      if (customKeterangan !== undefined) {
+        finalKeterangan = customKeterangan;
+      } else if (currentAtt?.keterangan) {
+        finalKeterangan = currentAtt.keterangan;
+      } else if (activeInvalSession) {
+        finalKeterangan = `Hadir KBM (Guru Inval: ${guru?.nama || ''} menggantikan ${activeInvalSession.nama_guru_utama})`;
+      } else if (status !== 'H') {
+        finalKeterangan = `Dicatat oleh Guru ${guru?.nama || ''}`;
+      }
+
       const payload = {
         nis,
         status,
         tanggal: getTodayDateString(),
-        waktu: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+        waktu: getDbTimeString(true),
         metode: activeTab === 'scanner' ? 'guru_scan' : 'manual',
-        keterangan: activeInvalSession
-          ? `Hadir KBM (Guru Inval: ${guru?.nama || ''} menggantikan ${activeInvalSession.nama_guru_utama})`
-          : `Dicatat oleh Guru ${guru?.nama || ''}`,
+        keterangan: finalKeterangan,
       };
 
-      if (targetSched?.id_jadwal) {
-        payload.id_jadwal = targetSched.id_jadwal;
+      if (targetSchedId) {
+        payload.id_jadwal = targetSchedId;
       }
 
-      await supabase.from('absensi').insert([payload]);
+      // Simpan ke Supabase: Jika ada targetSchedId, upsert by (nis, id_jadwal, tanggal).
+      // Jika targetSchedId null (misal perwalian umum), cari atau update existing record agar tidak melanggar unique constraint.
+      let savedData, saveErr;
+      if (targetSchedId) {
+        const res = await supabase
+          .from('absensi')
+          .upsert([payload], { onConflict: 'nis,id_jadwal,tanggal' })
+          .select();
+        savedData = res.data;
+        saveErr = res.error;
+      } else {
+        const { data: existingRecords } = await supabase
+          .from('absensi')
+          .select('id_absensi')
+          .eq('nis', nis)
+          .eq('tanggal', getTodayDateString())
+          .is('id_jadwal', null);
 
-      // Update map lokal seketika
-      setTodayAttendanceMap((prev) => ({
-        ...prev,
-        [nis]: { status, waktu: payload.waktu, metode: payload.metode },
-      }));
+        if (existingRecords && existingRecords.length > 0) {
+          const res = await supabase
+            .from('absensi')
+            .update(payload)
+            .eq('id_absensi', existingRecords[0].id_absensi)
+            .select();
+          savedData = res.data;
+          saveErr = res.error;
+        } else {
+          const res = await supabase
+            .from('absensi')
+            .insert([payload])
+            .select();
+          savedData = res.data;
+          saveErr = res.error;
+        }
+      }
 
-      const statusLabels = { H: 'Hadir', T: 'Terlambat', I: 'Izin', S: 'Sakit', A: 'Alpa' };
+      if (saveErr) throw saveErr;
+
+      const recordId = savedData?.[0]?.id_absensi || `temp-${Date.now()}`;
+
+      // Update list lokal seketika dengan ID riil
+      setTodayAttendanceList((prev) => {
+        const filtered = prev.filter(
+          (a) => !(a.nis === nis && (targetSchedId ? a.id_jadwal === targetSchedId : true))
+        );
+        return [...filtered, { ...payload, id_absensi: recordId }];
+      });
+
+      const statusLabels = { H: 'Hadir', S: 'Sakit', I: 'Izin', A: 'Alpa' };
       toast.success(
-        `Absensi NIS ${nis} berhasil dicatat sebagai "${statusLabels[status] || status}"!`,
-        'Presensi Berhasil'
+        `Presensi NIS ${nis} (${statusLabels[status] || status}) langsung tersimpan di database!`,
+        'Tersimpan di Database'
       );
       setScannedStudent(null);
     } catch (err) {
-      // Fallback lokal
-      setTodayAttendanceMap((prev) => ({
-        ...prev,
-        [nis]: { status, waktu: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) },
-      }));
-      toast.success(`Absensi dicatat: ${status}`, 'Presensi Berhasil');
+      console.error('Gagal menyimpan absensi ke database:', err);
+      toast.error(`Gagal menyimpan ke database: ${err.message}`);
       setScannedStudent(null);
+    }
+  }
+
+  // Update keterangan catatan presensi manual secara inline
+  async function updateAttendanceKeterangan(nis, newKeterangan) {
+    try {
+      const classSched = schedulesList.find(
+        (s) => String(s.id_kelas) === String(manualFilterKelasId) && (s.id_guru === guru?.nip || s.guru?.nama === guru?.nama)
+      );
+      const targetSchedId = (activeTab === 'manual' && classSched?.id_jadwal)
+        ? classSched.id_jadwal
+        : (currentActiveSchedule?.id_jadwal || classSched?.id_jadwal || null);
+
+      const currentAtt = getStudentAttendance(nis, targetSchedId) || getStudentDailyAttendance(nis);
+      const cleanNote = newKeterangan.trim() || null;
+
+      // Jika belum ada record presensi, otomatis buatkan dengan status default 'I' (jika ada alasan) atau 'H'
+      if (!currentAtt) {
+        if (!cleanNote) return;
+        await submitAttendance(nis, 'I', cleanNote);
+        return;
+      }
+
+      if (currentAtt.id_absensi && !String(currentAtt.id_absensi).startsWith('temp')) {
+        await supabase
+          .from('absensi')
+          .update({ keterangan: cleanNote })
+          .eq('id_absensi', currentAtt.id_absensi);
+      } else {
+        let updateQuery = supabase
+          .from('absensi')
+          .update({ keterangan: cleanNote })
+          .eq('nis', nis)
+          .eq('tanggal', getTodayDateString());
+        if (targetSchedId) {
+          updateQuery = updateQuery.eq('id_jadwal', targetSchedId);
+        }
+        await updateQuery;
+      }
+
+      setTodayAttendanceList((prev) =>
+        prev.map((a) => {
+          if (a.nis === nis && (targetSchedId ? a.id_jadwal === targetSchedId : true)) {
+            return { ...a, keterangan: cleanNote };
+          }
+          return a;
+        })
+      );
+      toast.success(`Keterangan NIS ${nis} berhasil disimpan`);
+    } catch (err) {
+      console.error('Gagal update keterangan:', err);
+      toast.error(`Gagal update keterangan: ${err.message}`);
     }
   }
 
   // Tandai Sisa Siswa Hadir Sekaligus
   async function handleMarkRemainingPresent(classStudents) {
-    const unrecorded = classStudents.filter((st) => !todayAttendanceMap[st.nis]);
+    const classSched = schedulesList.find(
+      (s) => String(s.id_kelas) === String(manualFilterKelasId) && (s.id_guru === guru?.nip || s.guru?.nama === guru?.nama)
+    );
+    const targetSchedId = classSched?.id_jadwal || currentActiveSchedule?.id_jadwal;
+
+    const unrecorded = classStudents.filter((st) => {
+      const att = getStudentAttendance(st.nis, targetSchedId) || getStudentDailyAttendance(st.nis);
+      return !att;
+    });
+
     if (unrecorded.length === 0) {
       toast.info('Semua siswa di kelas ini sudah memiliki catatan presensi hari ini.');
       return;
@@ -782,6 +1063,97 @@ export default function GuruDashboard() {
     toast.success(`Berhasil menandai ${unrecorded.length} siswa sebagai Hadir!`);
   }
 
+  // Simpan Seluruh Presensi & Keterangan Kelas ke Database Sekaligus
+  async function handleSaveAllManualAttendance() {
+    if (filteredClassStudents.length === 0) {
+      toast.info('Pilih kelas terlebih dahulu.');
+      return;
+    }
+
+    setSavingAllManual(true);
+    try {
+      const classSched = schedulesList.find(
+        (s) => String(s.id_kelas) === String(manualFilterKelasId) && (s.id_guru === guru?.nip || s.guru?.nama === guru?.nama)
+      );
+      const targetSchedId = (activeTab === 'manual' && classSched?.id_jadwal)
+        ? classSched.id_jadwal
+        : (currentActiveSchedule?.id_jadwal || classSched?.id_jadwal || null);
+
+      const todayStr = getTodayDateString();
+      const timeStr = getDbTimeString(true);
+
+      const recordsToUpsert = [];
+      for (const st of filteredClassStudents) {
+        const att = todayAttendanceMap[st.nis];
+        const customNote = manualKeteranganMap[st.nis];
+
+        // Tentukan status: gunakan status yang ada, atau jika ada catatan tapi belum berstatus, defaultkan ke 'I' (Izin)
+        const effectiveStatus = att?.status || (customNote?.trim() ? 'I' : null);
+        if (!effectiveStatus) continue;
+
+        const finalNote = customNote !== undefined
+          ? (customNote.trim() || null)
+          : (att?.keterangan || null);
+
+        const payload = {
+          nis: st.nis,
+          status: effectiveStatus,
+          tanggal: todayStr,
+          waktu: att?.waktu || timeStr,
+          metode: att?.metode || 'manual',
+          keterangan: finalNote,
+        };
+
+        if (targetSchedId) {
+          payload.id_jadwal = targetSchedId;
+        }
+
+        recordsToUpsert.push(payload);
+      }
+
+      if (recordsToUpsert.length === 0) {
+        toast.warning('Belum ada status presensi siswa yang dipilih di tabel.');
+        return;
+      }
+
+      // Upsert ke Supabase
+      if (targetSchedId) {
+        const { error } = await supabase
+          .from('absensi')
+          .upsert(recordsToUpsert, { onConflict: 'nis,id_jadwal,tanggal' });
+        if (error) throw error;
+      } else {
+        for (const rec of recordsToUpsert) {
+          const { data: existing } = await supabase
+            .from('absensi')
+            .select('id_absensi')
+            .eq('nis', rec.nis)
+            .eq('tanggal', todayStr)
+            .is('id_jadwal', null);
+
+          if (existing && existing.length > 0) {
+            await supabase.from('absensi').update(rec).eq('id_absensi', existing[0].id_absensi);
+          } else {
+            await supabase.from('absensi').insert([rec]);
+          }
+        }
+      }
+
+      // Sinkronkan ulang data dari database
+      await fetchTodayAttendance();
+
+      toast.success(
+        `Berhasil menyimpan dan memperbarui ${recordsToUpsert.length} data presensi & keterangan ke database!`,
+        'Database Terupdate'
+      );
+    } catch (err) {
+      console.error('Gagal simpan seluruh presensi ke database:', err);
+      toast.error(`Gagal menyimpan ke database: ${err.message}`);
+    } finally {
+      setSavingAllManual(false);
+    }
+  }
+
   // Simpan Jurnal KBM Harian
   function handleSaveJurnal(e) {
     e.preventDefault();
@@ -794,7 +1166,7 @@ export default function GuruDashboard() {
     const newEntry = {
       id: 'jrn_' + Date.now(),
       tanggal: getTodayDateString(),
-      waktu: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+      waktu: getDbTimeString(false),
       id_jadwal: currentActiveSchedule?.id_jadwal,
       nama_kelas: currentActiveSchedule?.kelas?.nama_kelas || 'Kelas',
       nama_mapel: currentActiveSchedule?.mata_pelajaran?.nama_mapel || 'Mata Pelajaran',
@@ -881,7 +1253,7 @@ export default function GuruDashboard() {
           badge: currentActiveSchedule ? currentActiveSchedule.kelas?.nama_kelas : null,
         },
         { id: 'scanner', label: 'Scan Kartu Murid', icon: Camera, color: 'text-cyan-400' },
-        { id: 'manual', label: 'Presensi Manual Rombel', icon: Users, color: 'text-amber-400' },
+        { id: 'manual', label: 'Presensi Manual Kelas', icon: Users, color: 'text-amber-400' },
         { id: 'jurnal', label: 'Jurnal Materi KBM', icon: BookOpen, color: 'text-blue-400' },
       ],
     },
@@ -940,6 +1312,23 @@ export default function GuruDashboard() {
   const filteredClassStudents = studentsList.filter(
     (st) => String(st.id_kelas) === String(manualFilterKelasId) && st.status_siswa !== 'lulus' && st.status_siswa !== 'pindah'
   );
+
+  // Map status presensi siswa hari ini untuk Presensi Manual Kelas
+  const todayAttendanceMap = useMemo(() => {
+    const map = {};
+    if (!todayAttendanceList || todayAttendanceList.length === 0) return map;
+
+    const classSched = schedulesList.find(
+      (s) => String(s.id_kelas) === String(manualFilterKelasId) && (s.id_guru === guru?.nip || s.guru?.nama === guru?.nama)
+    );
+    const targetSchedId = classSched?.id_jadwal || currentActiveSchedule?.id_jadwal;
+
+    filteredClassStudents.forEach((st) => {
+      map[st.nis] = getStudentAttendance(st.nis, targetSchedId) || getStudentDailyAttendance(st.nis);
+    });
+
+    return map;
+  }, [todayAttendanceList, filteredClassStudents, manualFilterKelasId, schedulesList, guru, currentActiveSchedule]);
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col lg:flex-row select-none">
@@ -1084,20 +1473,20 @@ export default function GuruDashboard() {
       <div className="flex-1 min-w-0 flex flex-col">
         {/* Mobile Top Header (Hidden on Desktop) */}
         <header className="lg:hidden gradient-header text-white shadow-md sticky top-0 z-40 px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2.5 min-w-0 flex-1 pr-2">
             <button
               type="button"
               onClick={() => setSidebarOpen(true)}
-              className="p-2 rounded-xl bg-white/15 hover:bg-white/25 active:scale-95 border border-white/20 text-white cursor-pointer"
+              className="p-2 rounded-xl bg-white/15 hover:bg-white/25 active:scale-95 border border-white/20 text-white cursor-pointer shrink-0"
               title="Buka Menu Sidebar"
             >
               <Menu className="w-5 h-5" />
             </button>
-            <div>
-              <h2 className="text-xs font-black leading-tight">
+            <div className="min-w-0 flex-1">
+              <h2 className="text-xs font-black leading-tight truncate">
                 {settings.sekolah_nama || 'SMPN 2 KOTA BANGUN'}
               </h2>
-              <p className="text-[10px] text-cyan-200 font-medium">{currentNavItem?.label}</p>
+              <p className="text-[10px] text-cyan-200 font-medium truncate">{currentNavItem?.label}</p>
             </div>
           </div>
 
@@ -1211,6 +1600,18 @@ export default function GuruDashboard() {
                 </div>
               </button>
             )}
+
+            {/* Tombol Sinkronkan Data KBM & Presensi */}
+            <button
+              type="button"
+              onClick={() => syncAllGuruData(false)}
+              disabled={isSyncing}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-bold transition-all cursor-pointer shadow-2xs active:scale-95 disabled:opacity-50"
+              title={`Klik untuk memperbarui seluruh data KBM & kehadiran siswa. Terakhir sinkron: ${lastSyncTime.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`}
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-blue-600' : 'text-blue-600'}`} />
+              <span className="hidden sm:inline">{isSyncing ? 'Sinkronisasi...' : 'Sinkronkan'}</span>
+            </button>
 
             <div className="px-3.5 py-1.5 rounded-xl bg-slate-100 text-slate-800 border border-slate-200 shadow-xs flex items-center gap-2.5">
               <div className="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold text-xs shadow-xs">
@@ -1588,7 +1989,7 @@ export default function GuruDashboard() {
                       </p>
                     </div>
                     <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-black text-xs">
-                      {filteredClassStudents.filter((st) => todayAttendanceMap[st.nis]?.status === 'H').length} / {filteredClassStudents.length} Hadir
+                      {filteredClassStudents.filter((st) => getStudentAttendance(st.nis)?.status === 'H').length} / {filteredClassStudents.length} Hadir
                     </span>
                   </div>
 
@@ -1596,19 +1997,23 @@ export default function GuruDashboard() {
                   <div className="space-y-2 max-h-[320px] overflow-y-auto pr-1">
                     {filteredClassStudents.length === 0 ? (
                       <p className="text-xs text-slate-400 text-center py-6">
-                        Pilih rombel jadwal mengajar untuk memuat daftar siswa.
+                        Pilih kelas jadwal mengajar untuk memuat daftar siswa.
                       </p>
                     ) : (
                       filteredClassStudents.map((st) => {
-                        const att = todayAttendanceMap[st.nis];
+                        const att = getStudentAttendance(st.nis);
                         return (
                           <div
                             key={st.nis}
                             className={`p-2.5 rounded-2xl border flex items-center justify-between text-xs transition-colors ${
                               att?.status === 'H'
                                 ? 'bg-emerald-50/60 border-emerald-200'
-                                : att?.status === 'T'
-                                ? 'bg-amber-50/60 border-amber-200'
+                                : att?.status === 'S'
+                                ? 'bg-blue-50/60 border-blue-200'
+                                : att?.status === 'I'
+                                ? 'bg-sky-50/60 border-sky-200'
+                                : att?.status === 'A'
+                                ? 'bg-rose-50/60 border-rose-200'
                                 : 'bg-slate-50 border-slate-200/80'
                             }`}
                           >
@@ -1617,8 +2022,12 @@ export default function GuruDashboard() {
                                 className={`w-7 h-7 rounded-xl font-bold flex items-center justify-center text-[10px] shrink-0 ${
                                   att?.status === 'H'
                                     ? 'bg-emerald-600 text-white'
-                                    : att?.status === 'T'
-                                    ? 'bg-amber-500 text-white'
+                                    : att?.status === 'S'
+                                    ? 'bg-blue-600 text-white'
+                                    : att?.status === 'I'
+                                    ? 'bg-sky-600 text-white'
+                                    : att?.status === 'A'
+                                    ? 'bg-rose-600 text-white'
                                     : 'bg-slate-200 text-slate-600'
                                 }`}
                               >
@@ -1705,12 +2114,11 @@ export default function GuruDashboard() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-5 gap-1.5 pt-1">
+                  <div className="grid grid-cols-4 gap-2 pt-1">
                     {[
                       { code: 'H', label: 'Hadir', bg: 'bg-emerald-600 hover:bg-emerald-700' },
-                      { code: 'T', label: 'Terlambat', bg: 'bg-amber-500 hover:bg-amber-600' },
-                      { code: 'I', label: 'Izin', bg: 'bg-sky-600 hover:bg-sky-700' },
                       { code: 'S', label: 'Sakit', bg: 'bg-blue-600 hover:bg-blue-700' },
+                      { code: 'I', label: 'Izin', bg: 'bg-sky-600 hover:bg-sky-700' },
                       { code: 'A', label: 'Alpa', bg: 'bg-rose-600 hover:bg-rose-700' },
                     ].map((btn) => (
                       <button
@@ -1736,7 +2144,7 @@ export default function GuruDashboard() {
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
                 <div>
                   <h2 className="text-base font-black text-slate-900 flex items-center gap-2">
-                    <Users className="w-5 h-5 text-blue-600" /> Presensi Manual Rombel Kelas
+                    <Users className="w-5 h-5 text-blue-600" /> Presensi Manual Kelas
                   </h2>
                   <p className="text-xs text-slate-500 mt-0.5">
                     Catat kehadiran siswa secara langsung dan monitor status absensi hari ini
@@ -1750,7 +2158,7 @@ export default function GuruDashboard() {
                     onChange={(e) => setManualFilterKelasId(e.target.value)}
                     className="px-3.5 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:bg-white focus:outline-none cursor-pointer"
                   >
-                    <option value="">-- Pilih Rombel Kelas --</option>
+                    <option value="">-- Pilih Kelas --</option>
                     {classesList.map((c) => (
                       <option key={c.id_kelas} value={c.id_kelas}>
                         Kelas {c.nama_kelas} (Tingkat {c.tingkat || '-'})
@@ -1766,39 +2174,117 @@ export default function GuruDashboard() {
                     <CheckSquare className="w-4 h-4" />
                     <span>Tandai Sisa Siswa Hadir</span>
                   </button>
+
+                  <button
+                    type="button"
+                    disabled={savingAllManual || filteredClassStudents.length === 0}
+                    onClick={handleSaveAllManualAttendance}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Save className={`w-4 h-4 ${savingAllManual ? 'animate-spin' : ''}`} />
+                    <span>{savingAllManual ? 'Menyimpan...' : 'Simpan ke Database'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Ringkasan Cepat Presensi Kelas */}
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                <div className="p-2.5 rounded-2xl bg-slate-50 border border-slate-200 text-center">
+                  <span className="text-[10px] font-bold text-slate-500 block uppercase">Total Siswa</span>
+                  <span className="text-base font-black text-slate-800">{filteredClassStudents.length}</span>
+                </div>
+                <div className="p-2.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-center">
+                  <span className="text-[10px] font-bold text-emerald-600 block uppercase">Hadir (H)</span>
+                  <span className="text-base font-black text-emerald-700">
+                    {filteredClassStudents.filter(st => todayAttendanceMap[st.nis]?.status === 'H').length}
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-2xl bg-blue-50 border border-blue-200 text-center">
+                  <span className="text-[10px] font-bold text-blue-600 block uppercase">Sakit (S)</span>
+                  <span className="text-base font-black text-blue-700">
+                    {filteredClassStudents.filter(st => todayAttendanceMap[st.nis]?.status === 'S').length}
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-2xl bg-sky-50 border border-sky-200 text-center">
+                  <span className="text-[10px] font-bold text-sky-600 block uppercase">Izin (I)</span>
+                  <span className="text-base font-black text-sky-700">
+                    {filteredClassStudents.filter(st => todayAttendanceMap[st.nis]?.status === 'I').length}
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-2xl bg-rose-50 border border-rose-200 text-center">
+                  <span className="text-[10px] font-bold text-rose-600 block uppercase">Alpa / Belum</span>
+                  <span className="text-base font-black text-rose-700">
+                    {filteredClassStudents.filter(st => !todayAttendanceMap[st.nis] || todayAttendanceMap[st.nis]?.status === 'A').length}
+                  </span>
                 </div>
               </div>
 
               {/* Tabel Siswa */}
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-100 text-slate-600 uppercase font-bold">
+              <div className="overflow-x-auto pb-2">
+                <table className="w-full text-left text-xs min-w-[720px]">
+                  <thead className="bg-slate-100 text-slate-600 uppercase font-bold text-[11px]">
                     <tr>
-                      <th className="p-3">No</th>
-                      <th className="p-3">Siswa</th>
-                      <th className="p-3">NIS</th>
-                      <th className="p-3">Status Hari Ini</th>
-                      <th className="p-3 text-right">Ubah Status Cepat</th>
+                      <th className="p-3 w-12 text-center">No</th>
+                      <th className="p-3 min-w-[150px]">Siswa</th>
+                      <th className="p-3 w-28">NIS</th>
+                      <th className="p-3 w-36">Status Hari Ini</th>
+                      <th className="p-3 min-w-[200px]">Keterangan / Alasan</th>
+                      <th className="p-3 w-44 text-center">Ubah Status</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {filteredClassStudents.length === 0 ? (
                       <tr>
-                        <td colSpan={5} className="p-8 text-center text-slate-400">
+                        <td colSpan={6} className="p-8 text-center text-slate-400">
                           Tidak ada siswa yang terdaftar di kelas ini atau belum ada kelas terpilih.
                         </td>
                       </tr>
                     ) : (
                       filteredClassStudents.map((st, idx) => {
                         const att = todayAttendanceMap[st.nis];
+                        const noteValue = manualKeteranganMap[st.nis] !== undefined
+                          ? manualKeteranganMap[st.nis]
+                          : (att?.keterangan || '');
+
+                        const statusBtnConfig = [
+                          {
+                            code: 'H',
+                            label: 'H',
+                            title: 'Hadir',
+                            activeClass: 'bg-emerald-600 text-white border-emerald-600 shadow-md shadow-emerald-600/30 ring-2 ring-emerald-500/40 font-black',
+                            inactiveClass: 'bg-emerald-50/80 text-emerald-700 border-emerald-200 hover:bg-emerald-600 hover:text-white hover:border-emerald-600 font-bold',
+                          },
+                          {
+                            code: 'S',
+                            label: 'S',
+                            title: 'Sakit',
+                            activeClass: 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-600/30 ring-2 ring-blue-500/40 font-black',
+                            inactiveClass: 'bg-blue-50/80 text-blue-700 border-blue-200 hover:bg-blue-600 hover:text-white hover:border-blue-600 font-bold',
+                          },
+                          {
+                            code: 'I',
+                            label: 'I',
+                            title: 'Izin',
+                            activeClass: 'bg-amber-500 text-white border-amber-500 shadow-md shadow-amber-500/30 ring-2 ring-amber-400/40 font-black',
+                            inactiveClass: 'bg-amber-50/80 text-amber-700 border-amber-200 hover:bg-amber-500 hover:text-white hover:border-amber-500 font-bold',
+                          },
+                          {
+                            code: 'A',
+                            label: 'A',
+                            title: 'Alpa',
+                            activeClass: 'bg-rose-600 text-white border-rose-600 shadow-md shadow-rose-600/30 ring-2 ring-rose-500/40 font-black',
+                            inactiveClass: 'bg-rose-50/80 text-rose-700 border-rose-200 hover:bg-rose-600 hover:text-white hover:border-rose-600 font-bold',
+                          },
+                        ];
+
                         return (
                           <tr key={st.nis} className="hover:bg-slate-50/80 transition-colors">
-                            <td className="p-3 font-mono text-slate-400">{idx + 1}</td>
+                            <td className="p-3 font-mono text-slate-400 text-center">{idx + 1}</td>
                             <td className="p-3 font-bold text-slate-800 flex items-center gap-2.5">
                               <div className="w-7 h-7 rounded-xl bg-blue-100 text-blue-700 font-black text-xs flex items-center justify-center shrink-0">
                                 {st.nama?.charAt(0) || 'S'}
                               </div>
-                              <span>{st.nama}</span>
+                              <span className="truncate max-w-[160px] sm:max-w-none">{st.nama}</span>
                             </td>
                             <td className="p-3 font-mono text-slate-600">{st.nis}</td>
                             <td className="p-3">
@@ -1807,19 +2293,16 @@ export default function GuruDashboard() {
                                   className={`px-2.5 py-1 rounded-full text-[10px] font-black inline-flex items-center gap-1 ${
                                     att.status === 'H'
                                       ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                                      : att.status === 'T'
-                                      ? 'bg-amber-100 text-amber-800 border border-amber-200'
-                                      : att.status === 'I'
-                                      ? 'bg-sky-100 text-sky-800 border border-sky-200'
                                       : att.status === 'S'
                                       ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                                      : att.status === 'I'
+                                      ? 'bg-amber-100 text-amber-800 border border-amber-200'
                                       : 'bg-rose-100 text-rose-800 border border-rose-200'
                                   }`}
                                 >
                                   {att.status === 'H' && '✓ HADIR'}
-                                  {att.status === 'T' && '⏱️ TERLAMBAT'}
-                                  {att.status === 'I' && '📝 IZIN'}
                                   {att.status === 'S' && '💊 SAKIT'}
+                                  {att.status === 'I' && '📝 IZIN'}
                                   {att.status === 'A' && '❌ ALPA'}
                                   {att.waktu && <span className="opacity-75">({att.waktu})</span>}
                                 </span>
@@ -1829,29 +2312,65 @@ export default function GuruDashboard() {
                                 </span>
                               )}
                             </td>
-                            <td className="p-3 text-right">
-                              <div className="inline-flex gap-1">
-                                {[
-                                  { code: 'H', label: 'H', title: 'Hadir', color: 'hover:bg-emerald-600 hover:text-white text-emerald-700 border-emerald-200' },
-                                  { code: 'T', label: 'T', title: 'Terlambat', color: 'hover:bg-amber-500 hover:text-white text-amber-700 border-amber-200' },
-                                  { code: 'I', label: 'I', title: 'Izin', color: 'hover:bg-sky-600 hover:text-white text-sky-700 border-sky-200' },
-                                  { code: 'S', label: 'S', title: 'Sakit', color: 'hover:bg-blue-600 hover:text-white text-blue-700 border-blue-200' },
-                                  { code: 'A', label: 'A', title: 'Alpa', color: 'hover:bg-rose-600 hover:text-white text-rose-700 border-rose-200' },
-                                ].map((b) => (
-                                  <button
-                                    key={b.code}
-                                    type="button"
-                                    onClick={() => submitAttendance(st.nis, b.code)}
-                                    title={b.title}
-                                    className={`w-7 h-7 rounded-lg border font-black text-xs transition-colors cursor-pointer flex items-center justify-center ${
-                                      att?.status === b.code
-                                        ? 'bg-slate-800 text-white border-slate-800 ring-2 ring-blue-500/30'
-                                        : `bg-white ${b.color}`
-                                    }`}
-                                  >
-                                    {b.label}
-                                  </button>
-                                ))}
+                            <td className="p-3">
+                              <div className="flex items-center gap-1.5">
+                                <input
+                                  type="text"
+                                  value={noteValue}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setManualKeteranganMap((prev) => ({
+                                      ...prev,
+                                      [st.nis]: val,
+                                    }));
+                                  }}
+                                  onBlur={(e) => {
+                                    const val = e.target.value;
+                                    if (val !== (att?.keterangan || '')) {
+                                      updateAttendanceKeterangan(st.nis, val);
+                                    }
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      e.currentTarget.blur();
+                                    }
+                                  }}
+                                  placeholder="Tulis keterangan / alasan..."
+                                  className="flex-1 px-3 py-1.5 bg-slate-50 border border-slate-200 focus:border-blue-500 focus:bg-white rounded-xl text-xs text-slate-700 placeholder:text-slate-400 focus:outline-none transition-all shadow-2xs"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => updateAttendanceKeterangan(st.nis, noteValue)}
+                                  title="Simpan keterangan siswa ini ke database"
+                                  className="p-1.5 rounded-lg bg-blue-50 hover:bg-blue-600 text-blue-600 hover:text-white border border-blue-200 transition-colors cursor-pointer shrink-0"
+                                >
+                                  <Save className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </td>
+                            <td className="p-3 text-center">
+                              <div className="inline-flex items-center gap-1.5 p-1 bg-slate-100/70 rounded-xl border border-slate-200/60">
+                                {statusBtnConfig.map((b) => {
+                                  const isActive = att?.status === b.code;
+                                  return (
+                                    <button
+                                      key={b.code}
+                                      type="button"
+                                      onClick={() => {
+                                        const note = manualKeteranganMap[st.nis] !== undefined
+                                          ? manualKeteranganMap[st.nis]
+                                          : (att?.keterangan || '');
+                                        submitAttendance(st.nis, b.code, note.trim() || null);
+                                      }}
+                                      title={`${b.title} (${b.code})`}
+                                      className={`w-7 h-7 rounded-lg border text-xs transition-all cursor-pointer flex items-center justify-center active:scale-95 ${
+                                        isActive ? b.activeClass : b.inactiveClass
+                                      }`}
+                                    >
+                                      {b.label}
+                                    </button>
+                                  );
+                                })}
                               </div>
                             </td>
                           </tr>
@@ -1860,6 +2379,24 @@ export default function GuruDashboard() {
                     )}
                   </tbody>
                 </table>
+              </div>
+
+              {/* Action Bar Footer Simpan ke Database */}
+              <div className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3">
+                <div className="text-xs text-slate-500 flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <span>Perubahan status per tombol otomatis tersimpan, atau klik tombol simpan untuk update massal seluruh kelas.</span>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={savingAllManual || filteredClassStudents.length === 0}
+                  onClick={handleSaveAllManualAttendance}
+                  className="w-full sm:w-auto px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-bold text-xs rounded-xl shadow-md shadow-blue-600/25 transition-all cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <Save className={`w-4 h-4 ${savingAllManual ? 'animate-spin' : ''}`} />
+                  <span>{savingAllManual ? 'Menyimpan ke Database...' : 'Simpan Semua Presensi & Keterangan ke Database'}</span>
+                </button>
               </div>
             </div>
           )}
@@ -2056,7 +2593,7 @@ export default function GuruDashboard() {
 
                     {/* Toolbar Aksi & Tampilan */}
                     <div className="flex flex-wrap items-center gap-2.5">
-                      {/* Toggle Cakupan: Jadwal Saya vs Semua Rombel */}
+                      {/* Toggle Cakupan: Jadwal Saya vs Semua Kelas */}
                       {schedulesList.length > 0 && (
                         <div className="flex items-center bg-slate-100 p-1 rounded-xl text-xs font-bold border border-slate-200">
                           <button
@@ -2079,7 +2616,7 @@ export default function GuruDashboard() {
                                 : 'text-slate-600 hover:text-slate-900'
                             }`}
                           >
-                            Semua Rombel ({schedulesList.length})
+                            Semua Kelas ({schedulesList.length})
                           </button>
                         </div>
                       )}
@@ -2151,7 +2688,7 @@ export default function GuruDashboard() {
 
                     <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
                       <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider block">
-                        Rombel / Kelas Diampu
+                        Kelas Diampu
                       </span>
                       <span className="text-2xl font-bold text-slate-900 mt-1 block">
                         {uniqueClasses.length} Kelas
@@ -2196,7 +2733,7 @@ export default function GuruDashboard() {
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <button
                           type="button"
                           onClick={() => {
@@ -2208,7 +2745,20 @@ export default function GuruDashboard() {
                           className="px-4 py-2 bg-white text-emerald-900 font-bold text-xs rounded-xl shadow-sm hover:bg-emerald-50 transition-all cursor-pointer flex items-center gap-1.5"
                         >
                           <Play className="w-3.5 h-3.5 fill-current" />
-                          <span>Buka Presensi QR Sekarang</span>
+                          <span>Buka QR Sekarang</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedScheduleId(currentLiveKbm.id_jadwal);
+                            setManualFilterKelasId(currentLiveKbm.id_kelas);
+                            setActiveTab('manual');
+                            toast.success(`Presensi Manual Kelas ${currentLiveKbm.kelas?.nama_kelas} dibuka!`);
+                          }}
+                          className="px-3.5 py-2 bg-amber-400 hover:bg-amber-300 text-amber-950 font-bold text-xs rounded-xl shadow-sm transition-all cursor-pointer flex items-center gap-1.5"
+                        >
+                          <Users className="w-3.5 h-3.5" />
+                          <span>Presensi Manual</span>
                         </button>
                         <button
                           type="button"
@@ -2220,7 +2770,7 @@ export default function GuruDashboard() {
                           className="px-3.5 py-2 bg-black/20 hover:bg-black/30 text-white font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
                         >
                           <BookOpen className="w-3.5 h-3.5" />
-                          <span>Tulis Jurnal KBM</span>
+                          <span>Tulis Jurnal</span>
                         </button>
                       </div>
                     </div>
@@ -2357,7 +2907,7 @@ export default function GuruDashboard() {
                                         )}
                                       </div>
 
-                                      {/* Info Rombel & Mapel */}
+                                      {/* Info Kelas & Mapel */}
                                       <div>
                                         <div className="flex items-center gap-2">
                                           <span className="px-2 py-0.5 rounded-md bg-blue-600 text-white font-black text-xs">
@@ -2378,7 +2928,7 @@ export default function GuruDashboard() {
                                       </div>
 
                                       {/* Tombol Aksi Cepat Sesi Ini */}
-                                      <div className="pt-1 flex items-center gap-2">
+                                      <div className="pt-1 flex items-center gap-1.5">
                                         <button
                                           type="button"
                                           onClick={() => {
@@ -2392,7 +2942,23 @@ export default function GuruDashboard() {
                                           className="flex-1 py-1.5 px-2 bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1 shadow-2xs"
                                         >
                                           <QrCode className="w-3.5 h-3.5" />
-                                          <span>Buka QR</span>
+                                          <span>QR</span>
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setSelectedScheduleId(s.id_jadwal);
+                                            setManualFilterKelasId(s.id_kelas);
+                                            setActiveTab('manual');
+                                            toast.success(
+                                              `Presensi Manual untuk Kelas ${s.kelas?.nama_kelas || ''} dibuka!`
+                                            );
+                                          }}
+                                          className="py-1.5 px-2 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-[11px] font-bold rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1"
+                                          title="Buka Presensi Manual Kelas"
+                                        >
+                                          <Users className="w-3.5 h-3.5 text-amber-600" />
+                                          <span>Manual</span>
                                         </button>
                                         <button
                                           type="button"
@@ -2401,7 +2967,7 @@ export default function GuruDashboard() {
                                             setManualFilterKelasId(s.id_kelas);
                                             setActiveTab('jurnal');
                                           }}
-                                          className="py-1.5 px-2.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 text-[11px] font-bold rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1"
+                                          className="py-1.5 px-2 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 text-[11px] font-bold rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1"
                                           title="Tulis Jurnal Materi KBM"
                                         >
                                           <BookOpen className="w-3.5 h-3.5 text-blue-600" />
@@ -2433,14 +2999,14 @@ export default function GuruDashboard() {
                       </div>
                     </div>
 
-                    <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
-                      <table className="w-full text-left text-xs border-collapse">
+                    <div className="border border-slate-200 rounded-2xl overflow-x-auto shadow-xs pb-1">
+                      <table className="w-full text-left text-xs border-collapse min-w-[750px]">
                         <thead>
                           <tr className="bg-slate-50 border-b border-slate-200 text-slate-700 font-bold">
                             <th className="py-3 px-3 text-center w-10">No</th>
                             <th className="py-3 px-3">Hari</th>
                             <th className="py-3 px-3">Jam Belajar</th>
-                            <th className="py-3 px-3">Rombel / Kelas</th>
+                            <th className="py-3 px-3">Kelas</th>
                             <th className="py-3 px-3">Mata Pelajaran</th>
                             <th className="py-3 px-3">Toleransi Terlambat</th>
                             {scheduleScope === 'all' && <th className="py-3 px-3">Guru Pengampu</th>}
@@ -2537,6 +3103,21 @@ export default function GuruDashboard() {
                                         onClick={() => {
                                           setSelectedScheduleId(s.id_jadwal);
                                           setManualFilterKelasId(s.id_kelas);
+                                          setActiveTab('manual');
+                                          toast.success(
+                                            `Presensi Manual Kelas ${s.kelas?.nama_kelas} dibuka!`
+                                          );
+                                        }}
+                                        className="p-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 rounded-xl transition-colors cursor-pointer"
+                                        title="Buka Presensi Manual Kelas"
+                                      >
+                                        <Users className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setSelectedScheduleId(s.id_jadwal);
+                                          setManualFilterKelasId(s.id_kelas);
                                           setActiveTab('jurnal');
                                         }}
                                         className="p-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl transition-colors cursor-pointer"
@@ -2586,7 +3167,7 @@ export default function GuruDashboard() {
           )}
 
           {/* ========================================================= */}
-          {/* TAB 6: HUB WALI KELAS (DEDIKASI KEPENGURUSAN ROMBEL)       */}
+          {/* TAB 6: HUB WALI KELAS (DEDIKASI KEPENGURUSAN KELAS)        */}
           {/* ========================================================= */}
           {activeTab === 'wali_kelas' && (
             <div className="space-y-6">
@@ -2609,7 +3190,7 @@ export default function GuruDashboard() {
                             </span>
                           </div>
                           <h2 className="text-xl font-black text-slate-900 mt-0.5">
-                            Kepengurusan Rombel Kelas {waliKelasOf.nama_kelas}
+                            Kepengurusan Kelas {waliKelasOf.nama_kelas}
                           </h2>
                           <p className="text-xs text-slate-600">
                             Wali Kelas: <strong>{guru?.nama}</strong> (NIP: {guru?.nip})
@@ -2633,23 +3214,20 @@ export default function GuruDashboard() {
                         (s) => String(s.id_kelas) === String(waliKelasOf.id_kelas)
                       );
                       const presentCount = waliStudents.filter(
-                        (s) => todayAttendanceMap[s.nis]?.status === 'H'
-                      ).length;
-                      const lateCount = waliStudents.filter(
-                        (s) => todayAttendanceMap[s.nis]?.status === 'T'
+                        (s) => getStudentDailyAttendance(s.nis)?.status === 'H'
                       ).length;
                       const sickCount = waliStudents.filter(
-                        (s) => todayAttendanceMap[s.nis]?.status === 'S'
+                        (s) => getStudentDailyAttendance(s.nis)?.status === 'S'
                       ).length;
                       const permCount = waliStudents.filter(
-                        (s) => todayAttendanceMap[s.nis]?.status === 'I'
+                        (s) => getStudentDailyAttendance(s.nis)?.status === 'I'
                       ).length;
                       const alpaCount = waliStudents.filter(
-                        (s) => todayAttendanceMap[s.nis]?.status === 'A'
+                        (s) => getStudentDailyAttendance(s.nis)?.status === 'A'
                       ).length;
 
                       return (
-                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
                           <div className="p-3.5 bg-white rounded-2xl border border-slate-200 shadow-2xs text-center">
                             <span className="text-[10px] font-bold text-slate-400 uppercase">Total Siswa</span>
                             <p className="text-lg font-black text-slate-800 mt-0.5">{waliStudents.length}</p>
@@ -2658,17 +3236,13 @@ export default function GuruDashboard() {
                             <span className="text-[10px] font-bold text-emerald-600 uppercase">Hadir</span>
                             <p className="text-lg font-black text-emerald-700 mt-0.5">{presentCount}</p>
                           </div>
-                          <div className="p-3.5 bg-white rounded-2xl border border-amber-200 shadow-2xs text-center">
-                            <span className="text-[10px] font-bold text-amber-600 uppercase">Terlambat</span>
-                            <p className="text-lg font-black text-amber-700 mt-0.5">{lateCount}</p>
+                          <div className="p-3.5 bg-white rounded-2xl border border-blue-200 shadow-2xs text-center">
+                            <span className="text-[10px] font-bold text-blue-600 uppercase">Sakit</span>
+                            <p className="text-lg font-black text-blue-700 mt-0.5">{sickCount}</p>
                           </div>
                           <div className="p-3.5 bg-white rounded-2xl border border-sky-200 shadow-2xs text-center">
                             <span className="text-[10px] font-bold text-sky-600 uppercase">Izin</span>
                             <p className="text-lg font-black text-sky-700 mt-0.5">{permCount}</p>
-                          </div>
-                          <div className="p-3.5 bg-white rounded-2xl border border-blue-200 shadow-2xs text-center">
-                            <span className="text-[10px] font-bold text-blue-600 uppercase">Sakit</span>
-                            <p className="text-lg font-black text-blue-700 mt-0.5">{sickCount}</p>
                           </div>
                           <div className="p-3.5 bg-white rounded-2xl border border-rose-200 shadow-2xs text-center">
                             <span className="text-[10px] font-bold text-rose-600 uppercase">Alpa</span>
@@ -2691,8 +3265,8 @@ export default function GuruDashboard() {
                         </div>
                       </div>
 
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-left text-xs">
+                      <div className="overflow-x-auto pb-2">
+                        <table className="w-full text-left text-xs min-w-[620px]">
                           <thead>
                             <tr className="border-b border-slate-200 bg-slate-50 text-slate-600 font-bold uppercase tracking-wider text-[10px]">
                               <th className="py-3 px-3">No</th>
@@ -2705,27 +3279,43 @@ export default function GuruDashboard() {
                           </thead>
                           <tbody className="divide-y divide-slate-100">
                             {(() => {
-                              const waliStudents = studentsList.filter(
+                              const rawStudents = studentsList.filter(
                                 (s) => String(s.id_kelas) === String(waliKelasOf.id_kelas)
                               );
+                              const waliStudents = sortAndRankStudentsByStreak(rawStudents, (s) => Number(s.streak_sekarang) || 0);
+
                               if (waliStudents.length === 0) {
                                 return (
                                   <tr>
                                     <td colSpan={6} className="py-8 text-center text-slate-400 italic">
-                                      Belum ada siswa terdaftar di rombel kelas ini.
+                                      Belum ada siswa terdaftar di kelas ini.
                                     </td>
                                   </tr>
                                 );
                               }
-                              return waliStudents.map((st, idx) => {
+                              return waliStudents.map((st) => {
                                 const summ = calculateStudentAchievementsSummary(st, {
                                   tahunAjaran: settings.tahun_ajaran_aktif,
                                   semesterAktif: settings.semester_aktif,
                                 });
-                                const todayAtt = todayAttendanceMap[st.nis];
+                                const todayAtt = getStudentDailyAttendance(st.nis);
                                 return (
                                   <tr key={st.nis} className="hover:bg-slate-50/80 transition-colors">
-                                    <td className="py-3 px-3 font-mono text-slate-500 font-bold">{idx + 1}</td>
+                                    <td className="py-3 px-3 font-mono text-slate-500 font-bold">
+                                      <span
+                                        className={`w-6 h-6 rounded-lg text-[11px] font-black inline-flex items-center justify-center ${
+                                          st.rank === 1
+                                            ? 'bg-amber-400 text-slate-950 ring-2 ring-amber-300'
+                                            : st.rank === 2
+                                            ? 'bg-slate-300 text-slate-900'
+                                            : st.rank === 3
+                                            ? 'bg-amber-800 text-white'
+                                            : 'bg-slate-100 text-slate-700'
+                                        }`}
+                                      >
+                                        {st.rank}
+                                      </span>
+                                    </td>
                                     <td className="py-3 px-3">
                                       <span className="font-bold text-slate-900 block">{st.nama}</span>
                                       <span className="text-[10px] text-slate-400 font-mono">NIS: {st.nis}</span>
@@ -2749,7 +3339,7 @@ export default function GuruDashboard() {
                                     <td className="py-3 px-3">
                                       {todayAtt ? (
                                         <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                          {todayAtt.status === 'H' ? 'Hadir' : todayAtt.status === 'T' ? 'Terlambat' : todayAtt.status} ({todayAtt.waktu})
+                                          {todayAtt.status === 'H' ? 'Hadir' : todayAtt.status === 'S' ? 'Sakit' : todayAtt.status === 'I' ? 'Izin' : 'Alpa'} ({todayAtt.waktu})
                                         </span>
                                       ) : (
                                         <span className="text-[10px] text-slate-400 italic">Belum Presensi</span>
@@ -2765,17 +3355,6 @@ export default function GuruDashboard() {
                                         >
                                           <Trophy className="w-3.5 h-3.5" />
                                           <span>Badges & Sikap Rapor</span>
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            setSelectedStudentForCert(st);
-                                            setCertSummary(summ);
-                                          }}
-                                          className="p-1 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 rounded-xl transition-colors cursor-pointer"
-                                          title="Cetak Piagam Penghargaan"
-                                        >
-                                          <Award className="w-3.5 h-3.5" />
                                         </button>
                                       </div>
                                     </td>
@@ -2798,17 +3377,17 @@ export default function GuruDashboard() {
                           <span>Kelas Lain yang Anda Ajar (Guru Mapel)</span>
                         </h3>
                         <p className="text-xs text-slate-500 mt-0.5">
-                          Akses rekapitulasi presensi khusus untuk rombel lain tempat Anda mengajar sesuai jadwal resmi
+                          Akses rekapitulasi presensi khusus untuk kelas lain tempat Anda mengajar sesuai jadwal resmi
                         </p>
                       </div>
                       <span className="text-[11px] font-bold px-2.5 py-1 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded-xl">
-                        {otherTaughtClasses.length} Rombel Lain Terdaftar
+                        {otherTaughtClasses.length} Kelas Lain Terdaftar
                       </span>
                     </div>
 
                     {otherTaughtClasses.length === 0 ? (
                       <p className="text-xs text-slate-400 py-6 text-center italic">
-                        Anda tidak memiliki jadwal mengajar di rombel lain di luar kelas binaan Anda.
+                        Anda tidak memiliki jadwal mengajar di kelas lain di luar kelas binaan Anda.
                       </p>
                     ) : (
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -2868,7 +3447,7 @@ export default function GuruDashboard() {
                         Peran: Guru Pengajar Mata Pelajaran
                       </h3>
                       <p className="text-xs text-slate-500 mt-0.5">
-                        Anda tidak bertindak sebagai wali kelas rombel. Berikut adalah daftar rombel yang Anda ampu dan berhak Anda akses rekap presensinya.
+                        Anda tidak bertindak sebagai wali kelas. Berikut adalah daftar kelas yang Anda ampu dan berhak Anda akses rekap presensinya.
                       </p>
                     </div>
                   </div>
@@ -2876,12 +3455,12 @@ export default function GuruDashboard() {
                   <div className="glass-card rounded-2xl p-6 shadow-xs border border-slate-200 bg-white space-y-4">
                     <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2">
                       <FileSpreadsheet className="w-4 h-4 text-indigo-600" />
-                      <span>Rekapitulasi Kelas yang Anda Ajar ({otherTaughtClasses.length} Rombel)</span>
+                      <span>Rekapitulasi Kelas yang Anda Ajar ({otherTaughtClasses.length} Kelas)</span>
                     </h4>
 
                     {otherTaughtClasses.length === 0 ? (
                       <p className="text-xs text-slate-400 py-6 text-center italic">
-                        Belum ada jadwal rombel mengajar yang terdaftar atas NIP Anda.
+                        Belum ada jadwal kelas mengajar yang terdaftar atas NIP Anda.
                       </p>
                     ) : (
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -2934,7 +3513,7 @@ export default function GuruDashboard() {
           {activeTab === 'radar_prestasi' && (
             <div className="space-y-6">
               {/* Header Hero Radar Prestasi */}
-              <div className="rounded-2xl p-6 sm:p-7 shadow-xs border border-slate-800 bg-slate-900 text-white flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="rounded-2xl p-6 sm:p-7 shadow-xs border border-slate-800 bg-slate-900 text-white flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                 <div className="flex items-center gap-4">
                   <div className="w-12 h-12 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-2xl shrink-0">
                     🏆
@@ -2947,94 +3526,253 @@ export default function GuruDashboard() {
                       Klasemen & Rekor Kehadiran Siswa
                     </h2>
                     <p className="text-xs text-slate-100/90 mt-0.5">
-                      Pantau siswa paling disiplin, cetak piagam penghargaan, dan salin narasi rapor sikap secara instan.
+                      Pantau siswa paling disiplin dan salin rekomendasi narasi rapor sikap secara instan.
                     </p>
                   </div>
                 </div>
 
-                {/* Filter Kelas */}
-                <div className="flex items-center gap-2 bg-slate-800 p-1 rounded-xl border border-slate-700">
-                  <span className="text-xs text-slate-300 font-bold pl-2">Filter Rombel:</span>
-                  <select
-                    value={radarFilterKelas}
-                    onChange={(e) => setRadarFilterKelas(e.target.value)}
-                    className="h-8 bg-white text-slate-800 text-xs font-bold rounded-lg px-3 border-0 focus:outline-none cursor-pointer"
-                  >
-                    <option value="all">Semua Kelas Sekolah</option>
-                    {classesList.map((c) => (
-                      <option key={c.id_kelas} value={c.id_kelas}>
-                        Kelas {c.nama_kelas}
-                      </option>
+                {/* Filter Periode Waktu (Pekan Ini, Bulan Ini, Semester) */}
+                <div className="flex flex-wrap items-center gap-2 self-start lg:self-auto">
+                  <span className="text-[11px] font-bold text-slate-300 uppercase tracking-wide">Periode:</span>
+                  <div className="inline-flex bg-slate-800 p-1 rounded-xl text-xs font-bold gap-1 border border-slate-700">
+                    {[
+                      { id: 'week', label: '📅 Pekan Ini' },
+                      { id: 'month', label: '📆 Bulan Ini' },
+                      { id: 'semester', label: '🏛️ Semester' },
+                    ].map((p) => {
+                      const active = radarFilterPeriod === p.id;
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => setRadarFilterPeriod(p.id)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                            active
+                              ? 'bg-blue-600 text-white shadow-xs font-black'
+                              : 'text-slate-300 hover:text-white hover:bg-slate-700/60'
+                          }`}
+                        >
+                          {p.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              {/* Controls Bar: Tingkat, Kelas, Pencarian Nama, & Reset Filter */}
+              <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-2.5">
+                  {/* Filter Tingkat Kelas */}
+                  <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs">
+                    <span className="font-bold text-slate-500 pl-2">Tingkat:</span>
+                    {[
+                      { id: 'all', label: 'Semua' },
+                      { id: '7', label: 'Kelas 7' },
+                      { id: '8', label: 'Kelas 8' },
+                      { id: '9', label: 'Kelas 9' },
+                    ].map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => setRadarFilterTingkat(t.id)}
+                        className={`px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer ${
+                          radarFilterTingkat === t.id
+                            ? 'bg-white text-slate-900 shadow-xs font-black'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        {t.label}
+                      </button>
                     ))}
-                  </select>
+                  </div>
+
+                  {/* Dropdown Filter Kelas */}
+                  <div className="flex items-center gap-1.5 bg-slate-100 px-2 py-1 rounded-xl border border-slate-200 text-xs">
+                    <span className="font-bold text-slate-500">Kelas:</span>
+                    <select
+                      value={radarFilterKelas}
+                      onChange={(e) => setRadarFilterKelas(e.target.value)}
+                      className="bg-transparent font-bold text-slate-800 cursor-pointer focus:outline-none text-xs"
+                    >
+                      <option value="all">Semua Kelas</option>
+                      {classesList.map((c) => (
+                        <option key={c.id_kelas} value={c.id_kelas}>
+                          Kelas {c.nama_kelas}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {/* Input Search Siswa */}
+                  <div className="relative flex-1 sm:w-64">
+                    <input
+                      type="text"
+                      placeholder="Cari siswa (Nama/NIS)..."
+                      value={radarSearchKeyword}
+                      onChange={(e) => setRadarSearchKeyword(e.target.value)}
+                      className="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                    />
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                  </div>
+
+                  {/* Tombol Reset jika ada filter aktif */}
+                  {(radarFilterKelas !== 'all' ||
+                    radarFilterTingkat !== 'all' ||
+                    radarFilterPeriod !== 'month' ||
+                    radarSearchKeyword.trim() !== '') && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRadarFilterKelas('all');
+                        setRadarFilterTingkat('all');
+                        setRadarFilterPeriod('month');
+                        setRadarSearchKeyword('');
+                      }}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-rose-50 text-rose-700 hover:bg-rose-100 text-xs font-bold rounded-xl transition-colors cursor-pointer shrink-0"
+                      title="Reset Semua Filter"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      <span>Reset</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
               {/* Tabel Leaderboard Siswa */}
               <div className="glass-card rounded-3xl p-6 shadow-sm border border-slate-200 bg-white space-y-4">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
                     <Flame className="w-5 h-5 text-orange-500 fill-orange-500" />
                     Peringkat Siswa Terdisiplin
                   </h3>
-                  <span className="text-xs text-slate-500">
-                    Diurutkan berdasarkan rekor streak kehadiran tanpa alpa
+                  <span className="text-xs text-slate-500 font-medium">
+                    {radarFilterPeriod === 'week'
+                      ? '📅 Menampilkan rekor kehadiran sepekan ini (maks. 5 hari kerja)'
+                      : radarFilterPeriod === 'semester'
+                      ? '🏛️ Menampilkan rekor streak tertinggi sepanjang semester'
+                      : '📆 Menampilkan streak aktif bulan berjalan'}
                   </span>
                 </div>
 
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
+                <div className="overflow-x-auto pb-2">
+                  <table className="w-full text-left text-xs min-w-[640px]">
                     <thead>
                       <tr className="border-b border-slate-200 bg-slate-50 text-slate-600 font-bold uppercase tracking-wider text-[10px]">
                         <th className="py-3 px-3 text-center">Rank</th>
                         <th className="py-3 px-3">Nama Siswa</th>
                         <th className="py-3 px-3">Kelas</th>
-                        <th className="py-3 px-3">Rekor Streak</th>
+                        <th className="py-3 px-3">
+                          Rekor Streak (
+                          {radarFilterPeriod === 'week'
+                            ? 'Pekan'
+                            : radarFilterPeriod === 'semester'
+                            ? 'Semester'
+                            : 'Bulan Ini'}
+                          )
+                        </th>
                         <th className="py-3 px-3">Level & XP</th>
                         <th className="py-3 px-3 text-center">Aksi Wali Kelas / Guru</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {(() => {
-                        const targetList = studentsList
-                          .filter((st) => radarFilterKelas === 'all' || String(st.id_kelas) === String(radarFilterKelas))
-                          .sort((a, b) => (b.streak_sekarang || 0) - (a.streak_sekarang || 0));
+                        // Formula streak tersinkronisasi dengan Admin dan Murid
+                        const getPeriodStreak = (s) => {
+                          const curr = Number(s.streak_sekarang) || 0;
+                          const maxS = Number(s.streak_tertinggi || s.streak_sekarang) || 0;
+                          if (radarFilterPeriod === 'week') return Math.min(5, curr);
+                          if (radarFilterPeriod === 'semester') return maxS;
+                          return curr;
+                        };
+
+                        const targetClass = classesList.find((c) => String(c.id_kelas) === String(radarFilterKelas));
+
+                        const pool = studentsList.filter((st) => {
+                          // 1. Filter Kelas Fleksibel
+                          if (radarFilterKelas !== 'all') {
+                            const sClassId = String(st.id_kelas || st.kelas?.id_kelas || '');
+                            const sClassName = String(st.kelas?.nama_kelas || '').trim().toUpperCase();
+                            const directMatch = sClassId === String(radarFilterKelas);
+                            const nameMatch = targetClass && sClassName === String(targetClass.nama_kelas || '').trim().toUpperCase();
+                            const idMatch = targetClass && sClassId === String(targetClass.nama_kelas || '').trim().toUpperCase();
+                            if (!directMatch && !nameMatch && !idMatch) return false;
+                          }
+
+                          // 2. Filter Tingkat Kelas
+                          if (radarFilterTingkat !== 'all') {
+                            const rawTingkat = st.kelas?.tingkat || (
+                              String(st.kelas?.nama_kelas || '').toUpperCase().includes('VII') ? 7 :
+                              String(st.kelas?.nama_kelas || '').toUpperCase().includes('VIII') ? 8 :
+                              String(st.kelas?.nama_kelas || '').toUpperCase().includes('IX') ? 9 : null
+                            );
+                            if (rawTingkat && String(rawTingkat) !== String(radarFilterTingkat)) return false;
+                          }
+
+                          // 3. Pencarian Kata Kunci
+                          if (radarSearchKeyword.trim()) {
+                            const q = radarSearchKeyword.toLowerCase();
+                            const matchNama = (st.nama || '').toLowerCase().includes(q);
+                            const matchNis = (st.nis || '').toLowerCase().includes(q);
+                            if (!matchNama && !matchNis) return false;
+                          }
+
+                          return true;
+                        });
+
+                        const targetList = sortAndRankStudentsByStreak(pool, getPeriodStreak);
 
                         if (targetList.length === 0) {
                           return (
                             <tr>
-                              <td colSpan={6} className="py-10 text-center text-slate-400 italic">
-                                Tidak ada data siswa untuk kelas ini.
+                              <td colSpan={6} className="py-12 text-center text-slate-400 italic">
+                                <div className="space-y-1">
+                                  <p className="font-bold text-slate-600">Tidak ada data siswa yang cocok dengan filter.</p>
+                                  <p className="text-[11px]">Silakan ubah filter kelas, tingkat, atau kata kunci pencarian di atas.</p>
+                                </div>
                               </td>
                             </tr>
                           );
                         }
 
-                        return targetList.slice(0, 30).map((st, idx) => {
-                          const summ = calculateStudentAchievementsSummary(st, {
-                            tahunAjaran: settings.tahun_ajaran_aktif,
-                            semesterAktif: settings.semester_aktif,
-                          });
-                          const isTop3 = idx < 3;
+                        return targetList.slice(0, 100).map((st) => {
+                          const streakVal = getPeriodStreak(st);
+                          const summ = calculateStudentAchievementsSummary(
+                            { ...st, periodStreak: streakVal },
+                            {
+                              tahunAjaran: settings.tahun_ajaran_aktif,
+                              semesterAktif: settings.semester_aktif,
+                            }
+                          );
+
                           return (
                             <tr key={st.nis} className="hover:bg-slate-50/80 transition-colors">
                               <td className="py-3 px-3 text-center">
                                 <span
                                   className={`w-7 h-7 rounded-xl text-xs font-black inline-flex items-center justify-center ${
-                                    idx === 0
-                                      ? 'bg-amber-400 text-white shadow-xs'
-                                      : idx === 1
-                                      ? 'bg-slate-400 text-white shadow-xs'
-                                      : idx === 2
-                                      ? 'bg-amber-700 text-white shadow-xs'
+                                    st.rank === 1
+                                      ? 'bg-amber-400 text-slate-950 shadow-xs ring-2 ring-amber-400/30'
+                                      : st.rank === 2
+                                      ? 'bg-slate-300 text-slate-900 border border-slate-400'
+                                      : st.rank === 3
+                                      ? 'bg-amber-800 text-white'
                                       : 'bg-slate-100 text-slate-600'
                                   }`}
                                 >
-                                  {idx + 1}
+                                  {st.rank}
                                 </span>
                               </td>
                               <td className="py-3 px-3">
-                                <span className="font-bold text-slate-900 block">{st.nama}</span>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-bold text-slate-900">{st.nama}</span>
+                                  {st.isShared && (
+                                    <span className="px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 text-[9px] font-black border border-amber-200">
+                                      = Seri
+                                    </span>
+                                  )}
+                                </div>
                                 <span className="text-[10px] text-slate-400 font-mono">NIS: {st.nis}</span>
                               </td>
                               <td className="py-3 px-3 font-bold text-blue-700">
@@ -3043,7 +3781,7 @@ export default function GuruDashboard() {
                               <td className="py-3 px-3">
                                 <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-black bg-orange-50 text-orange-700 border border-orange-200">
                                   <Flame className="w-3.5 h-3.5 fill-orange-500 text-orange-500" />
-                                  <span>{st.streak_sekarang || 0} Hari</span>
+                                  <span>{streakVal} Hari</span>
                                 </span>
                               </td>
                               <td className="py-3 px-3">
@@ -3056,22 +3794,11 @@ export default function GuruDashboard() {
                                 <div className="flex items-center justify-center gap-1.5">
                                   <button
                                     type="button"
-                                    onClick={() => setSelectedStudentForAchievement(st)}
+                                    onClick={() => setSelectedStudentForAchievement({ ...st, periodStreak: streakVal })}
                                     className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold rounded-xl transition-colors cursor-pointer flex items-center gap-1 shadow-2xs"
                                   >
                                     <Trophy className="w-3.5 h-3.5" />
                                     <span>Lihat Prestasi & Catatan Rapor</span>
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setSelectedStudentForCert(st);
-                                      setCertSummary(summ);
-                                    }}
-                                    className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 text-xs font-bold rounded-xl transition-colors cursor-pointer flex items-center gap-1"
-                                  >
-                                    <Award className="w-3.5 h-3.5" />
-                                    <span>Piagam</span>
                                   </button>
                                 </div>
                               </td>
@@ -3238,7 +3965,7 @@ export default function GuruDashboard() {
 
                     <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200 text-center">
                       <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                        Rombel Binaan
+                        Kelas Binaan
                       </span>
                       <span className="text-lg font-black text-slate-800 mt-0.5 block">
                         {new Set(mySchedules.map((s) => s.id_kelas)).size || 1} Kelas
@@ -3766,6 +4493,7 @@ export default function GuruDashboard() {
         onClose={() => setShowScheduleReportModal(false)}
         teacher={guru}
         schedules={mySchedules.length > 0 ? mySchedules : schedulesList}
+        classes={classesList}
         schoolSettings={settings}
       />
 
@@ -3778,24 +4506,6 @@ export default function GuruDashboard() {
         student={selectedStudentForAchievement}
         tahunAjaran={settings.tahun_ajaran_aktif}
         semesterAktif={settings.semester_aktif}
-        onOpenCertificate={(st, sum) => {
-          setSelectedStudentForCert(st);
-          setCertSummary(sum);
-        }}
-      />
-
-      {/* ========================================================= */}
-      {/* MODAL PIAGAM PENGHARGAAN RESMI SEKOLAH                    */}
-      {/* ========================================================= */}
-      <SchoolCertificateModal
-        isOpen={Boolean(selectedStudentForCert)}
-        onClose={() => {
-          setSelectedStudentForCert(null);
-          setCertSummary(null);
-        }}
-        student={selectedStudentForCert}
-        summary={certSummary}
-        settings={settings}
       />
     </div>
   );

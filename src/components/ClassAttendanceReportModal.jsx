@@ -20,6 +20,7 @@ import {
   BookOpen,
   School,
   Building,
+  ExternalLink,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { supabase } from '../lib/supabase';
@@ -179,7 +180,7 @@ export default function ClassAttendanceReportModal({
       }
       setStudents(studentList);
 
-      // 2. Tarik Jadwal & Mata Pelajaran Rombel Ini
+      // 2. Tarik Jadwal & Mata Pelajaran Kelas Ini
       const { data: schedData } = await supabase
         .from('jadwal')
         .select('id_jadwal, id_mapel, hari, jam_mulai, jam_selesai, mata_pelajaran(nama_mapel), guru(nama)')
@@ -235,7 +236,7 @@ export default function ClassAttendanceReportModal({
           s: 0,
           a: 0,
           total: 0,
-          percentage: 100,
+          percentage: 0,
         };
       });
 
@@ -337,7 +338,7 @@ export default function ClassAttendanceReportModal({
       // Hitung total & persentase
       const calculatedList = Object.values(summaryMap).map((item) => {
         const total = item.h + item.i + item.s + item.a;
-        const percentage = total > 0 ? Math.round((item.h / total) * 100) : 100;
+        const percentage = total > 0 ? Math.round((item.h / total) * 100) : 0;
         return { ...item, total, percentage };
       });
 
@@ -449,7 +450,7 @@ export default function ClassAttendanceReportModal({
     });
 
     // Baris Total
-    const avgPercentage = grandTotal > 0 ? Math.round((totalH / grandTotal) * 100) : 100;
+    const avgPercentage = grandTotal > 0 ? Math.round((totalH / grandTotal) * 100) : 0;
     excelData.push([
       'TOTAL KELAS',
       '',
@@ -545,9 +546,76 @@ export default function ClassAttendanceReportModal({
     toast.success(`Rekap presensi berhasil diexport ke file Excel: ${fileName}!`, 'Export Excel Sukses');
   }
 
+  // Sync body class for print isolation
+  useEffect(() => {
+    if (isOpen) {
+      document.body.classList.add('print-modal-open');
+    } else {
+      document.body.classList.remove('print-modal-open');
+    }
+    return () => {
+      document.body.classList.remove('print-modal-open');
+    };
+  }, [isOpen]);
+
   // 2. CETAK / SIMPAN KE PDF RESMI
   function handlePrintPdf() {
-    window.print();
+    if (!kelas) {
+      toast.error('Pilih kelas terlebih dahulu.');
+      return;
+    }
+    if (loading) {
+      toast.warning('Sedang menghitung rekapitulasi presensi, mohon tunggu...');
+      return;
+    }
+    if (!rekapList || rekapList.length === 0) {
+      toast.error('Tidak ada data siswa atau catatan presensi di kelas ini untuk dicetak.');
+      return;
+    }
+    setTimeout(() => {
+      window.print();
+    }, 150);
+  }
+
+  function handleOpenNewTab() {
+    if (!kelas) {
+      toast.error('Pilih kelas terlebih dahulu.');
+      return;
+    }
+    if (!rekapList || rekapList.length === 0) {
+      toast.error('Tidak ada data siswa untuk dicetak.');
+      return;
+    }
+    const printEl = document.getElementById('printArea');
+    if (!printEl) {
+      window.print();
+      return;
+    }
+    const kelasName = (kelas.nama_kelas || 'Kelas').replace(/[^a-zA-Z0-9]/g, '_');
+    const htmlContent = `<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <title>Rekap_Presensi_Kelas_${kelasName}</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap');
+    @page { size: A4 landscape; margin: 6mm 8mm; }
+    * { box-sizing: border-box; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+    body { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; margin: 0; padding: 10px; font-size: 9.5px; color: #000; background: #fff; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 9px; }
+    th, td { border: 1px solid #334155; padding: 4px 5px; }
+    th { background: #f1f5f9; text-transform: uppercase; font-size: 8.5px; font-weight: 800; text-align: left; }
+    tr { page-break-inside: avoid; }
+    .no-print { display: none !important; }
+  </style>
+</head>
+<body>
+  ${printEl.innerHTML}
+</body>
+</html>`;
+    const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
   }
 
   if (!isOpen || !kelas) return null;
@@ -558,7 +626,7 @@ export default function ClassAttendanceReportModal({
   const totalSakit = rekapList.reduce((acc, curr) => acc + curr.s, 0);
   const totalAlpa = rekapList.reduce((acc, curr) => acc + curr.a, 0);
   const totalPertemuan = rekapList.reduce((acc, curr) => acc + curr.total, 0);
-  const persentaseKelas = totalPertemuan > 0 ? Math.round((totalHadir / totalPertemuan) * 100) : 100;
+  const persentaseKelas = totalPertemuan > 0 ? Math.round((totalHadir / totalPertemuan) * 100) : 0;
 
   return (
     <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 z-50 overflow-hidden print:static print:bg-white print:p-0 print:overflow-visible print:m-0">
@@ -567,11 +635,13 @@ export default function ClassAttendanceReportModal({
         @media print {
           @page {
             size: A4 landscape;
-            margin: 8mm;
+            margin: 6mm 8mm;
           }
           body {
             background: #ffffff !important;
             color: #000000 !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
           }
           body * {
             visibility: hidden;
@@ -580,7 +650,7 @@ export default function ClassAttendanceReportModal({
             visibility: visible;
           }
           #printArea {
-            position: absolute !important;
+            position: relative !important;
             left: 0 !important;
             top: 0 !important;
             width: 100% !important;
@@ -590,6 +660,34 @@ export default function ClassAttendanceReportModal({
             background: #ffffff !important;
             box-shadow: none !important;
             border: none !important;
+            zoom: 88% !important;
+          }
+          table {
+            width: 100% !important;
+            table-layout: auto !important;
+          }
+          th, td {
+            padding: 4px 6px !important;
+            font-size: 10px !important;
+            word-break: break-word !important;
+          }
+          .document-header, .kop-surat {
+            page-break-after: avoid !important;
+            break-after: avoid !important;
+          }
+          thead {
+            display: table-header-group !important;
+          }
+          tfoot {
+            display: table-footer-group !important;
+          }
+          tr {
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+          }
+          .signature-block {
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
           }
           .no-print, [data-no-print="true"] {
             display: none !important;
@@ -901,7 +999,7 @@ export default function ClassAttendanceReportModal({
         {/* ========================================================= */}
         <div id="printArea" className="p-6 overflow-y-auto flex-1 overscroll-contain space-y-4 printable-area print:p-0 print:m-0 print:overflow-visible print:bg-white print:w-full" ref={printRef}>
           {/* Printable Document Header (Tampil khusus saat Print PDF) */}
-          <div className="hidden print:block border-b-2 border-slate-900 pb-4 mb-4">
+          <div className="hidden print:block border-b-2 border-slate-900 pb-3 mb-3 document-header kop-surat" style={{ breakAfter: 'avoid', pageBreakAfter: 'avoid' }}>
             <div className="flex items-center justify-between text-center gap-4 pb-2 border-b border-slate-900">
               <div className="w-16 h-16 flex-shrink-0 flex items-center justify-center">
                 {schoolLogo ? (
@@ -957,8 +1055,8 @@ export default function ClassAttendanceReportModal({
               <p className="text-xs">Tidak ada data siswa ditemukan untuk kelas ini.</p>
             </div>
           ) : (
-            <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
-              <table className="w-full text-left text-xs border-collapse">
+            <div className="border border-slate-200 rounded-2xl overflow-x-auto shadow-2xs pb-1">
+              <table className="w-full min-w-[750px] text-left text-xs border-collapse">
                 <thead className="bg-slate-100 text-slate-700 uppercase font-black text-[11px] border-b border-slate-200">
                   <tr>
                     <th className="p-3 w-12 text-center border-r border-slate-200">No</th>
@@ -983,47 +1081,55 @@ export default function ClassAttendanceReportModal({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {rekapList.map((st, idx) => (
-                    <tr key={st.nis} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="p-2.5 text-center font-mono text-slate-500 border-r border-slate-200/60">
-                        {idx + 1}
-                      </td>
-                      <td className="p-2.5 font-mono font-bold text-slate-700 border-r border-slate-200/60">
-                        {st.nis}
-                      </td>
-                      <td className="p-2.5 font-semibold text-slate-900 border-r border-slate-200/60">
-                        {st.nama}
-                      </td>
-                      <td className="p-2.5 text-center font-black text-emerald-700 bg-emerald-50/30 border-r border-slate-200/60">
-                        {st.h}
-                      </td>
-                      <td className="p-2.5 text-center font-black text-blue-700 bg-blue-50/30 border-r border-slate-200/60">
-                        {st.i}
-                      </td>
-                      <td className="p-2.5 text-center font-black text-amber-700 bg-amber-50/30 border-r border-slate-200/60">
-                        {st.s}
-                      </td>
-                      <td className="p-2.5 text-center font-black text-rose-700 bg-rose-50/30 border-r border-slate-200/60">
-                        {st.a}
-                      </td>
-                      <td className="p-2.5 text-center font-bold text-slate-700 border-r border-slate-200/60">
-                        {st.total}
-                      </td>
-                      <td className="p-2.5 text-center">
-                        <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${
-                          st.percentage >= 90
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : st.percentage >= 75
-                            ? 'bg-amber-100 text-amber-800'
-                            : 'bg-rose-100 text-rose-800'
-                        }`}>
-                          {st.percentage}%
-                        </span>
+                  {rekapList.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} className="p-8 text-center text-slate-400 italic font-medium">
+                        Tidak ada data siswa atau catatan presensi pada kelas ini untuk periode yang dipilih.
                       </td>
                     </tr>
-                  ))}
+                  ) : (
+                    rekapList.map((st, idx) => (
+                      <tr key={st.nis} className="hover:bg-slate-50/80 transition-colors break-inside-avoid">
+                        <td className="p-2.5 text-center font-mono text-slate-500 border-r border-slate-200/60">
+                          {idx + 1}
+                        </td>
+                        <td className="p-2.5 font-mono font-bold text-slate-700 border-r border-slate-200/60">
+                          {st.nis}
+                        </td>
+                        <td className="p-2.5 font-semibold text-slate-900 border-r border-slate-200/60">
+                          {st.nama}
+                        </td>
+                        <td className="p-2.5 text-center font-black text-emerald-700 bg-emerald-50/30 border-r border-slate-200/60">
+                          {st.h}
+                        </td>
+                        <td className="p-2.5 text-center font-black text-blue-700 bg-blue-50/30 border-r border-slate-200/60">
+                          {st.i}
+                        </td>
+                        <td className="p-2.5 text-center font-black text-amber-700 bg-amber-50/30 border-r border-slate-200/60">
+                          {st.s}
+                        </td>
+                        <td className="p-2.5 text-center font-black text-rose-700 bg-rose-50/30 border-r border-slate-200/60">
+                          {st.a}
+                        </td>
+                        <td className="p-2.5 text-center font-bold text-slate-700 border-r border-slate-200/60">
+                          {st.total}
+                        </td>
+                        <td className="p-2.5 text-center">
+                          <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${
+                            st.percentage >= 90
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : st.percentage >= 75
+                              ? 'bg-amber-100 text-amber-800'
+                              : 'bg-rose-100 text-rose-800'
+                          }`}>
+                            {st.percentage}%
+                          </span>
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
-                <tfoot className="bg-slate-100 font-bold text-slate-800 border-t-2 border-slate-300">
+                <tfoot className="bg-slate-100 font-bold text-slate-800 border-t-2 border-slate-300 break-inside-avoid">
                   <tr>
                     <td colSpan={3} className="p-3 text-right uppercase text-xs">
                       Akumulasi Total Kelas:
@@ -1041,7 +1147,7 @@ export default function ClassAttendanceReportModal({
           )}
 
           {/* Kolom Tanda Tangan Resmi (Khusus Tampil saat Print PDF) */}
-          <div className="hidden print:grid grid-cols-2 gap-8 pt-8 text-xs text-slate-900">
+          <div className="hidden print:grid grid-cols-2 gap-8 pt-8 text-xs text-slate-900 signature-block break-inside-avoid">
             <div className="text-center relative">
               <p className="mb-14">
                 Mengetahui,<br />
@@ -1099,6 +1205,17 @@ export default function ClassAttendanceReportModal({
             >
               <FileSpreadsheet className="w-4 h-4" />
               <span>Download Excel (.xlsx)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleOpenNewTab}
+              disabled={loading || rekapList.length === 0}
+              className="flex-1 sm:flex-none px-3.5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold border border-indigo-200 flex items-center justify-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+              title="Buka dokumen di tab baru browser lalu tekan Ctrl+P"
+            >
+              <ExternalLink className="w-4 h-4 text-indigo-600" />
+              <span>Buka di Tab Baru</span>
             </button>
 
             <button

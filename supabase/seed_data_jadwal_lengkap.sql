@@ -17,7 +17,7 @@ ON CONFLICT (nip) DO UPDATE SET
   is_piket = EXCLUDED.is_piket,
   foto_profil = EXCLUDED.foto_profil;
 
--- 2. SEED DATA KELAS (ROMBEL SMP TINGKAT 7, 8, 9)
+-- 2. SEED DATA KELAS (SMP TINGKAT 7, 8, 9)
 INSERT INTO public.kelas (id_kelas, nama_kelas, tingkat, wali_kelas) VALUES
 ('c0000000-0000-0000-0000-000000000001', 'VII-A', 7, NULL),
 ('c0000000-0000-0000-0000-000000000002', 'VIII-A', 8, NULL),

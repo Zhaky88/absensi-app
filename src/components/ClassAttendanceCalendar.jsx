@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useToast } from '../context/ToastModalContext';
+import { logActivity } from '../lib/activityLogger';
 
 /**
  * ClassAttendanceCalendar Component
@@ -37,7 +38,7 @@ import { useToast } from '../context/ToastModalContext';
  *    - Tab/Tombol mata pelajaran interaktif dapat diklik untuk berganti sesi absensi.
  * 2. Format Baku 4 Status: H (Hadir), I (Izin), S (Sakit), A (Alpa). Status Telat (T) dihilangkan.
  * 3. Kolom Keterangan Opsional per Sesi Mapel: Mencatat alasan spesifik di jam pelajaran tersebut.
- * 4. Mode "Semua Kelas" & "Per Kelas": Monitoring multi-rombel atau rombel tunggal.
+ * 4. Mode "Semua Kelas" & "Per Kelas": Monitoring multi-kelas atau kelas tunggal.
  * 5. Quick Inline Status & Keterangan: Penyimpanan instan per jadwal KBM ke database.
  */
 export default function ClassAttendanceCalendar({
@@ -89,12 +90,7 @@ export default function ClassAttendanceCalendar({
   const [searchStudent, setSearchStudent] = useState('');
   const [savingAttendance, setSavingAttendance] = useState(false);
 
-  // Tab Hari Aktif untuk Jadwal Mapel
   const dayNameList = ['Ahad', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
-  const todayDayIndex = new Date().getDay();
-  const [activeScheduleDay, setActiveScheduleDay] = useState(
-    dayNameList[todayDayIndex] === 'Ahad' ? 'Senin' : dayNameList[todayDayIndex]
-  );
 
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
@@ -196,7 +192,7 @@ export default function ClassAttendanceCalendar({
       let schedQuery = supabase
         .from('jadwal')
         .select(
-          'id_jadwal, id_kelas, hari, jam_mulai, jam_selesai, batas_terlambat, mata_pelajaran(nama_mapel), guru(nama, foto_profil)'
+          'id_jadwal, id_kelas, hari, jam_mulai, jam_selesai, batas_waktu_terlambat, mata_pelajaran(nama_mapel), guru(nama, foto_profil)'
         )
         .order('jam_mulai', { ascending: true });
 
@@ -204,12 +200,21 @@ export default function ClassAttendanceCalendar({
         schedQuery = schedQuery.eq('id_kelas', selectedKelasId);
       }
 
-      const { data: schedData } = await schedQuery;
+      const { data: schedData, error: schedError } = await schedQuery;
+      if (schedError) {
+        console.warn('Error fetching jadwal from supabase:', schedError);
+      }
 
       let effectiveSchedules = [];
       if (schedData && schedData.length > 0) {
-        effectiveSchedules = schedData;
-        setSchedules(schedData);
+        const mappedSchedules = schedData.map((s) => ({
+          ...s,
+          batas_terlambat: s.batas_waktu_terlambat
+            ? s.batas_waktu_terlambat.slice(0, 5)
+            : '07:45',
+        }));
+        effectiveSchedules = mappedSchedules;
+        setSchedules(mappedSchedules);
       } else {
         // Fallback mock jadwal per kelas & hari
         const mockSchedules = [];
@@ -344,26 +349,82 @@ export default function ClassAttendanceCalendar({
           (targetJadwalId ? r.id_jadwal === targetJadwalId : true)
       );
 
+      // JIKA DIKLIK ULANG STATUS YANG SAMA: Batalkan presensi (Reset kembali ke Belum Diabsen)
+      if (existing && existing.status === newStatus) {
+        if (!String(existing.id_absensi).startsWith('mock')) {
+          await supabase
+            .from('absensi')
+            .delete()
+            .eq('id_absensi', existing.id_absensi);
+        }
+
+        setAttendanceRecords((prev) =>
+          prev.filter(
+            (r) =>
+              !(
+                r.nis === nis &&
+                r.tanggal === targetDate &&
+                (targetJadwalId ? r.id_jadwal === targetJadwalId : true)
+              )
+          )
+        );
+
+        if (selectedDayRoster) {
+          setSelectedDayRoster((prev) => {
+            if (!prev) return prev;
+            let h = prev.hadirCount;
+            let iCount = prev.izinCount;
+            let sCount = prev.sakitCount;
+            let a = prev.alpaCount;
+            if (newStatus === 'H') h--;
+            else if (newStatus === 'I') iCount--;
+            else if (newStatus === 'S') sCount--;
+            else if (newStatus === 'A') a--;
+            return {
+              ...prev,
+              hadirCount: Math.max(0, h),
+              izinCount: Math.max(0, iCount),
+              sakitCount: Math.max(0, sCount),
+              alpaCount: Math.max(0, a),
+            };
+          });
+        }
+
+        toast.info('Status presensi direset (Belum Diabsen)');
+        return;
+      }
+
       const payload = {
         nis,
         tanggal: targetDate,
         id_jadwal: targetJadwalId || existing?.id_jadwal || null,
         status: newStatus,
         waktu: newStatus === 'H' ? (existing?.waktu && existing.waktu !== '-' ? existing.waktu : '07:15') : '00:00',
-        metode: 'guru_mapel',
-        keterangan: existing?.keterangan || '',
+        metode: 'manual',
+        keterangan: existing?.keterangan || null,
       };
 
-      if (existing && !String(existing.id_absensi).startsWith('mock')) {
-        await supabase
-          .from('absensi')
-          .update(payload)
-          .eq('id_absensi', existing.id_absensi);
-      } else {
-        await supabase
-          .from('absensi')
-          .upsert([payload], { onConflict: 'nis,id_jadwal,tanggal' });
-      }
+      const { data: savedData, error: saveErr } = await supabase
+        .from('absensi')
+        .upsert([payload], { onConflict: 'nis,id_jadwal,tanggal' })
+        .select();
+
+      if (saveErr) throw saveErr;
+      const recordId = savedData?.[0]?.id_absensi || existing?.id_absensi || `temp-${Date.now()}`;
+      toast.success(`Status ${newStatus} berhasil disimpan langsung ke database!`);
+
+      // Catat log aktivitas presensi
+      const studentObj = students.find((s) => s.nis === nis);
+      logActivity({
+        role: 'guru',
+        userId: nis,
+        userName: studentObj?.nama || `Siswa NIS ${nis}`,
+        action: `Absensi Manual (${newStatus})`,
+        category: 'presensi',
+        details: `Guru mencatat presensi: Status ${newStatus} untuk ${studentObj?.nama || 'Siswa'} (NIS ${nis}) pada tanggal ${targetDate}`,
+        status: newStatus === 'A' ? 'warning' : 'success',
+        metadata: { nis, tanggal: targetDate, status: newStatus },
+      });
 
       setAttendanceRecords((prev) => {
         const filtered = prev.filter(
@@ -377,7 +438,7 @@ export default function ClassAttendanceCalendar({
         return [
           ...filtered,
           {
-            id_absensi: existing?.id_absensi || `temp-${Date.now()}`,
+            id_absensi: recordId,
             nis,
             tanggal: targetDate,
             id_jadwal: payload.id_jadwal,
@@ -396,8 +457,8 @@ export default function ClassAttendanceCalendar({
           let iCount = prev.izinCount;
           let sCount = prev.sakitCount;
           let a = prev.alpaCount;
-          const oldStatus = existing?.status || 'A';
-          if (oldStatus === 'H' || oldStatus === 'T') h--;
+          const oldStatus = existing ? (existing.status === 'T' ? 'H' : existing.status) : null;
+          if (oldStatus === 'H') h--;
           else if (oldStatus === 'I') iCount--;
           else if (oldStatus === 'S') sCount--;
           else if (oldStatus === 'A') a--;
@@ -417,8 +478,8 @@ export default function ClassAttendanceCalendar({
         });
       }
     } catch (e) {
-      console.error('Gagal memperbarui status absensi mapel:', e);
-      toast.info(`Status mapel diperbarui ke ${newStatus}`);
+      console.error('Gagal menyimpan status absensi ke database:', e);
+      toast.error(`Gagal menyimpan ke database: ${e.message}`);
     } finally {
       setSavingAttendance(false);
     }
@@ -436,49 +497,60 @@ export default function ClassAttendanceCalendar({
 
       const trimmedKeterangan = newKeterangan?.trim() || '';
 
-      const payload = {
-        nis,
-        tanggal: targetDate,
-        id_jadwal: targetJadwalId || existing?.id_jadwal || null,
-        status: existing?.status || 'A',
-        waktu: existing?.waktu || '00:00',
-        metode: 'guru_mapel',
-        keterangan: trimmedKeterangan,
-      };
+      if (!existing && !trimmedKeterangan) return;
 
-      if (existing && !String(existing.id_absensi).startsWith('mock')) {
-        await supabase
-          .from('absensi')
-          .update({ keterangan: trimmedKeterangan })
-          .eq('id_absensi', existing.id_absensi);
-      } else {
-        await supabase
-          .from('absensi')
-          .upsert([payload], { onConflict: 'nis,id_jadwal,tanggal' });
-      }
+      if (existing) {
+        if (!String(existing.id_absensi).startsWith('mock')) {
+          await supabase
+            .from('absensi')
+            .update({ keterangan: trimmedKeterangan || null })
+            .eq('id_absensi', existing.id_absensi);
+        }
 
-      setAttendanceRecords((prev) => {
-        const filtered = prev.filter(
-          (r) =>
-            !(
-              r.nis === nis &&
-              r.tanggal === targetDate &&
-              (targetJadwalId ? r.id_jadwal === targetJadwalId : true)
-            )
+        setAttendanceRecords((prev) =>
+          prev.map((r) =>
+            r.id_absensi === existing.id_absensi
+              ? { ...r, keterangan: trimmedKeterangan || null }
+              : r
+          )
         );
-        return [
-          ...filtered,
+      } else {
+        // Jika siswa belum diabsen tetapi guru memberikan catatan khusus:
+        // Deteksi secara logis apakah ada kata sakit atau izin, jangan memaksakan 'H' (Hadir)!
+        const derivedStatus = /sakit|dokter|demam/i.test(trimmedKeterangan)
+          ? 'S'
+          : /izin|acara|tugas|dispensasi/i.test(trimmedKeterangan)
+          ? 'I'
+          : 'I';
+
+        const payload = {
+          nis,
+          tanggal: targetDate,
+          id_jadwal: targetJadwalId || null,
+          status: derivedStatus,
+          waktu: '00:00',
+          metode: 'manual',
+          keterangan: trimmedKeterangan,
+        };
+
+        const { data: insData } = await supabase.from('absensi').insert([payload]).select();
+        const newId = insData?.[0]?.id_absensi || `temp-${Date.now()}`;
+
+        setAttendanceRecords((prev) => [
+          ...prev,
           {
-            id_absensi: existing?.id_absensi || `temp-${Date.now()}`,
+            id_absensi: newId,
             nis,
             tanggal: targetDate,
             id_jadwal: payload.id_jadwal,
-            status: existing?.status || 'A',
-            waktu: existing?.waktu || '00:00',
+            status: derivedStatus,
+            waktu: payload.waktu,
             keterangan: trimmedKeterangan,
           },
-        ];
-      });
+        ]);
+
+        toast.info(`Catatan disimpan dengan status ${derivedStatus === 'S' ? 'Sakit' : 'Izin'}`);
+      }
     } catch (err) {
       console.warn('Gagal menyimpan keterangan absensi:', err);
     }
@@ -524,13 +596,6 @@ export default function ClassAttendanceCalendar({
 
   const isMyTeachingScope = calendarScope === 'my_teaching' && !!activeTeacher;
 
-  // Jadwal Pelajaran untuk hari yang aktif dipilih
-  const allSchedulesForActiveDay = schedules.filter(
-    (s) => s.hari.toLowerCase() === activeScheduleDay.toLowerCase()
-  );
-  const schedulesForActiveDay = isMyTeachingScope
-    ? allSchedulesForActiveDay.filter((s) => myScheduleIds.has(s.id_jadwal))
-    : allSchedulesForActiveDay;
 
   // Grid Calculation
   const firstDayIndex = new Date(year, month, 1).getDay(); // 0 = Minggu
@@ -570,16 +635,31 @@ export default function ClassAttendanceCalendar({
 
     const totalStudents = students.length;
 
+    // Hitung status unik per siswa pada hari ini untuk mencegah hitungan ganda antar-sesi mapel
+    const studentDayStatus = new Map();
+    dayRecords.forEach((r) => {
+      const prev = studentDayStatus.get(r.nis);
+      // Prioritas status: H/T > I > S > A
+      if (
+        !prev ||
+        r.status === 'H' ||
+        r.status === 'T' ||
+        (prev === 'A' && (r.status === 'I' || r.status === 'S'))
+      ) {
+        studentDayStatus.set(r.nis, r.status === 'T' ? 'H' : r.status);
+      }
+    });
+
     let hadirCount = 0;
     let izinCount = 0;
     let sakitCount = 0;
     let alpaCount = 0;
 
-    dayRecords.forEach((r) => {
-      if (r.status === 'H' || r.status === 'T') hadirCount++;
-      else if (r.status === 'I') izinCount++;
-      else if (r.status === 'S') sakitCount++;
-      else if (r.status === 'A') alpaCount++;
+    studentDayStatus.forEach((status) => {
+      if (status === 'H') hadirCount++;
+      else if (status === 'I') izinCount++;
+      else if (status === 'S') sakitCount++;
+      else if (status === 'A') alpaCount++;
     });
 
     const isToday = new Date().toDateString() === dateObj.toDateString();
@@ -590,7 +670,7 @@ export default function ClassAttendanceCalendar({
         ? Math.round((hadirCount / totalStudents) * 100)
         : 0;
 
-    // Rombel yang memiliki KBM di hari ini
+    // Kelas yang memiliki KBM di hari ini
     const runningClassesOnDay = classes.filter((cls) =>
       daySchedules.some((s) => s.id_kelas === cls.id_kelas)
     );
@@ -601,7 +681,6 @@ export default function ClassAttendanceCalendar({
         type="button"
         onClick={() => {
           setSelectedDayKey(dateKey);
-          setActiveScheduleDay(dayName === 'Ahad' ? 'Senin' : dayName);
           setModalActiveKelasFilter('all');
 
           // Auto-expand all running classes initially
@@ -698,7 +777,7 @@ export default function ClassAttendanceCalendar({
               </div>
             ) : isAllClasses && runningClassesOnDay.length > 0 ? (
               <div className="flex items-center justify-between text-[9px] font-bold text-indigo-700">
-                <span className="truncate">{runningClassesOnDay.length} Rombel KBM</span>
+                <span className="truncate">{runningClassesOnDay.length} Kelas KBM</span>
               </div>
             ) : null}
             <div className="flex items-center justify-between text-[10px] font-bold text-slate-600">
@@ -822,7 +901,7 @@ export default function ClassAttendanceCalendar({
         </div>
       )}
 
-      {/* Top Header Controls: Pemilihan Kelas, Info Rombel, & Bulan */}
+      {/* Top Header Controls: Pemilihan Kelas, Info Kelas, & Bulan */}
       <div className="glass-card rounded-3xl p-5 shadow-sm border border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           {onBack && (
@@ -845,10 +924,10 @@ export default function ClassAttendanceCalendar({
               <h2 className="text-base font-black text-slate-800">
                 {isMyTeachingScope
                   ? isAllClasses
-                    ? `Kalender Jam Mengajar Saya: Seluruh Rombel Terkait (${myTeachingClasses.length} Kelas)`
+                    ? `Kalender Jam Mengajar Saya: Seluruh Kelas Terkait (${myTeachingClasses.length} Kelas)`
                     : `Kalender Jam Mengajar Saya: Kelas ${currentKelasObj?.nama_kelas || 'Kelas'}`
                   : isAllClasses
-                  ? `Kalender Presensi KBM: Seluruh Kelas (${classes.length} Rombel)`
+                  ? `Kalender Presensi KBM: Seluruh Kelas (${classes.length} Kelas)`
                   : `Kalender Presensi & KBM: Kelas ${currentKelasObj?.nama_kelas || 'Kelas'}`}
               </h2>
               {isWaliKelas && (
@@ -861,7 +940,7 @@ export default function ClassAttendanceCalendar({
               {isMyTeachingScope
                 ? `Memantau presensi siswa khusus pada jam mata pelajaran yang Anda ampu`
                 : isAllClasses
-                ? `Memantau presensi siswa mandiri per mata pelajaran & guru pengampu di semua rombel`
+                ? `Memantau presensi siswa mandiri per mata pelajaran & guru pengampu di semua kelas`
                 : `Wali Kelas: ${
                     currentKelasObj?.guru?.nama ||
                     currentKelasObj?.wali_kelas ||
@@ -885,8 +964,8 @@ export default function ClassAttendanceCalendar({
             >
               <option value="all">
                 {isMyTeachingScope
-                  ? `🌟 Seluruh Kelas Ajar Saya (${myTeachingClasses.length} Rombel)`
-                  : `🌟 Semua Kelas (${classes.length} Rombel)`}
+                  ? `🌟 Seluruh Kelas Ajar Saya (${myTeachingClasses.length} Kelas)`
+                  : `🌟 Semua Kelas (${classes.length} Kelas)`}
               </option>
               {classes.map((cls) => {
                 const isTaughtByMe = myTeachingClasses.some((mc) => mc.id_kelas === cls.id_kelas);
@@ -933,147 +1012,10 @@ export default function ClassAttendanceCalendar({
           </button>
 
           {/* Tombol Admin: Atur Jadwal Kelas */}
-          {isAdmin && onManageSchedule && (
-            <button
-              type="button"
-              onClick={onManageSchedule}
-              className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Atur Jadwal / Mapel</span>
-            </button>
-          )}
+
         </div>
       </div>
 
-      {/* KARTU JADWAL MATA PELAJARAN & GURU PENGAJAR */}
-      <div className="glass-card rounded-3xl p-5 shadow-sm border border-slate-200 space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
-          <div className="flex items-center gap-2">
-            <BookOpen className="w-5 h-5 text-indigo-600" />
-            <div>
-              <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider">
-                Mata Pelajaran & Guru Pengajar (Hari {activeScheduleDay})
-              </h3>
-              <p className="text-[11px] text-slate-500">
-                {isAllClasses
-                  ? `Daftar mata pelajaran yang diajarkan oleh guru pengampu di setiap rombel pada hari ${activeScheduleDay}.`
-                  : `Daftar mata pelajaran yang berjalan beserta guru pengajar di kelas ini.`}
-              </p>
-            </div>
-          </div>
-
-          {/* Selector Hari KBM */}
-          <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
-            {['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'].map((h) => (
-              <button
-                key={h}
-                type="button"
-                onClick={() => setActiveScheduleDay(h)}
-                className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                  activeScheduleDay === h
-                    ? 'bg-indigo-600 text-white shadow-xs'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                {h}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* List Mapel pada Hari Terpilih */}
-        {schedulesForActiveDay.length === 0 ? (
-          <div className="py-4 text-center text-xs text-slate-400 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
-            Tidak ada jadwal mata pelajaran untuk hari {activeScheduleDay}.
-          </div>
-        ) : isAllClasses ? (
-          /* Tampilan Pengelompokan Jadwal Per Kelas */
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
-            {classes.map((cls) => {
-              const classSchedules = schedulesForActiveDay.filter(
-                (s) => s.id_kelas === cls.id_kelas
-              );
-              return (
-                <div
-                  key={cls.id_kelas}
-                  className="p-4 rounded-2xl bg-indigo-50/40 border border-indigo-100/80 space-y-2.5 flex flex-col justify-between"
-                >
-                  <div>
-                    <div className="flex items-center justify-between border-b border-indigo-100/60 pb-2 mb-2">
-                      <div className="flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-indigo-600" />
-                        <h4 className="text-xs font-black text-slate-800">
-                          Kelas {cls.nama_kelas}
-                        </h4>
-                      </div>
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-white text-indigo-700 border border-indigo-200">
-                        {classSchedules.length} Sesi KBM
-                      </span>
-                    </div>
-
-                    {classSchedules.length === 0 ? (
-                      <p className="text-[11px] text-slate-400 italic py-1">
-                        Tidak ada sesi mengajar di hari {activeScheduleDay}.
-                      </p>
-                    ) : (
-                      <div className="space-y-1.5">
-                        {classSchedules.map((sch) => (
-                          <div
-                            key={sch.id_jadwal}
-                            className="bg-white p-2 rounded-xl border border-indigo-100 shadow-2xs space-y-0.5"
-                          >
-                            <span className="text-xs font-bold text-slate-800 block truncate">
-                              {sch.mata_pelajaran?.nama_mapel}
-                            </span>
-                            <div className="flex items-center justify-between text-[10px] text-slate-500">
-                              <span className="text-indigo-700 font-medium truncate">
-                                👨‍🏫 {sch.guru?.nama || 'Guru Pengampu'}
-                              </span>
-                              <span className="font-mono text-slate-400 shrink-0">
-                                {sch.jam_mulai?.slice(0, 5)} - {sch.jam_selesai?.slice(0, 5)}
-                              </span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          /* Tampilan Per Satu Kelas */
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {schedulesForActiveDay.map((sch) => (
-              <div
-                key={sch.id_jadwal}
-                className="p-3.5 rounded-2xl bg-indigo-50/50 border border-indigo-100 flex items-start gap-3 hover:bg-indigo-50 transition-colors"
-              >
-                <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0 mt-0.5">
-                  <GraduationCap className="w-4 h-4" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <span className="text-xs font-bold text-slate-800 block truncate">
-                    {sch.mata_pelajaran?.nama_mapel || 'Mata Pelajaran'}
-                  </span>
-                  <p className="text-[11px] text-indigo-700 font-semibold truncate mt-0.5">
-                    Guru: {sch.guru?.nama || 'Guru Pengajar'}
-                  </p>
-                  <div className="flex items-center gap-1.5 text-[10px] text-slate-500 mt-1 font-mono">
-                    <Clock className="w-3 h-3 text-slate-400" />
-                    <span>
-                      {sch.jam_mulai?.slice(0, 5) || '07:30'} -{' '}
-                      {sch.jam_selesai?.slice(0, 5) || '09:00'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
 
       {/* Grid Kalender Presensi */}
       <div className="glass-card rounded-3xl p-5 shadow-sm border border-slate-200 space-y-4">
@@ -1085,7 +1027,7 @@ export default function ClassAttendanceCalendar({
               <span>
                 Total Seluruh Siswa:{' '}
                 <strong className="text-indigo-700 font-black">{students.length} Siswa</strong>{' '}
-                ({classes.length} Rombel)
+                ({classes.length} Kelas)
               </span>
             ) : (
               <span>
@@ -1210,7 +1152,7 @@ export default function ClassAttendanceCalendar({
                         : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
                     }`}
                   >
-                    Semua Rombel ({classes.length})
+                    Semua Kelas ({classes.length})
                   </button>
                   {(isMyTeachingScope ? myTeachingClasses : classes).map((cls) => (
                     <button
@@ -1285,21 +1227,37 @@ export default function ClassAttendanceCalendar({
                     classSchedules.find((s) => s.id_jadwal === activeJadwalId) ||
                     classSchedules[0];
 
-                  // Filter data absensi untuk siswa di kelas ini KHUSUS untuk jadwal yang dipilih
+                  // Filter data absensi untuk siswa di kelas ini KHUSUS untuk jadwal KBM yang dipilih
                   const classRecords = classStudents.map((st) => {
-                    const rec = attendanceRecords.find(
+                    // 1. Cari record presensi spesifik untuk sesi jadwal ini
+                    const exactRec = attendanceRecords.find(
                       (r) =>
                         r.nis === st.nis &&
                         r.tanggal === selectedDayRoster.dateKey &&
                         (activeJadwalId ? r.id_jadwal === activeJadwalId : true)
                     );
-                    const rawStatus = rec?.status === 'T' ? 'H' : (rec?.status || 'A');
+
+                    // 2. Izin/Sakit/Alpa harian (all-day leave): jika siswa berhalangan sepanjang hari
+                    // CATATAN PENTING: Hadir (H) dari sesi mapel lain TIDAK BOLEH dianggap otomatis hadir di sesi ini!
+                    const dailyLeaveRec = !exactRec
+                      ? attendanceRecords.find(
+                          (r) =>
+                            r.nis === st.nis &&
+                            r.tanggal === selectedDayRoster.dateKey &&
+                            (r.status === 'I' || r.status === 'S' || r.status === 'A')
+                        )
+                      : null;
+
+                    const rec = exactRec || dailyLeaveRec;
+                    const isRecorded = !!rec;
+                    const rawStatus = rec?.status === 'T' ? 'H' : (rec?.status || null);
                     return {
                       ...st,
                       status: rawStatus,
-                      waktu: rec?.waktu || '-',
+                      waktu: exactRec?.waktu || (dailyLeaveRec ? '-' : '-'),
                       keterangan: rec?.keterangan || '',
-                      isRecorded: !!rec,
+                      isRecorded,
+                      isAllDayLeave: !exactRec && !!dailyLeaveRec,
                     };
                   });
 
@@ -1314,14 +1272,17 @@ export default function ClassAttendanceCalendar({
                   let clIzin = 0;
                   let clSakit = 0;
                   let clAlpa = 0;
+                  let clBelum = 0;
                   classRecords.forEach((r) => {
-                    if (r.status === 'H') clHadir++;
+                    if (!r.isRecorded) clBelum++;
+                    else if (r.status === 'H') clHadir++;
                     else if (r.status === 'I') clIzin++;
                     else if (r.status === 'S') clSakit++;
-                    else clAlpa++;
+                    else if (r.status === 'A') clAlpa++;
                   });
 
                   const clTotal = classStudents.length;
+                  const clRecorded = clHadir + clIzin + clSakit + clAlpa;
                   const clPercent =
                     clTotal > 0
                       ? Math.round((clHadir / clTotal) * 100)
@@ -1344,8 +1305,19 @@ export default function ClassAttendanceCalendar({
                             <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
                               Tingkat {cls.tingkat || 10}
                             </span>
-                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
-                              {clPercent}% Hadir {activeScheduleObj ? `(${activeScheduleObj.mata_pelajaran?.nama_mapel})` : ''}
+                            <span
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                                clRecorded === 0
+                                  ? 'bg-slate-100 text-slate-600'
+                                  : clPercent >= 85
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : clPercent >= 70
+                                  ? 'bg-amber-100 text-amber-800'
+                                  : 'bg-rose-100 text-rose-800'
+                              }`}
+                            >
+                              {clRecorded > 0 ? `${clPercent}% Hadir` : 'Belum Diabsen'}{' '}
+                              {activeScheduleObj ? `(${activeScheduleObj.mata_pelajaran?.nama_mapel})` : ''}
                             </span>
                           </div>
                           <p className="text-xs text-slate-500 mt-0.5">
@@ -1364,6 +1336,9 @@ export default function ClassAttendanceCalendar({
                             <span className="text-sky-700">I: {clIzin}</span>
                             <span className="text-indigo-700">S: {clSakit}</span>
                             <span className="text-rose-700 font-black">A: {clAlpa}</span>
+                            {clBelum > 0 && (
+                              <span className="text-slate-400 font-medium">Belum: {clBelum}</span>
+                            )}
                           </div>
 
                           <button
@@ -1512,11 +1487,18 @@ export default function ClassAttendanceCalendar({
                                         <Award className="w-3 h-3" /> Streak:{' '}
                                         {st.streak_sekarang || 0}h
                                       </span>
-                                      {st.waktu !== '-' && (
+                                      {st.isRecorded ? (
                                         <>
                                           <span>•</span>
                                           <span className="text-slate-600 font-mono">
                                             Masuk: {st.waktu}
+                                          </span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <span>•</span>
+                                          <span className="px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 font-bold border border-amber-200 text-[9px]">
+                                            Belum Diabsen
                                           </span>
                                         </>
                                       )}
@@ -1580,7 +1562,7 @@ export default function ClassAttendanceCalendar({
                                           'bg-rose-600 text-white border-rose-600',
                                       },
                                     ].map((item) => {
-                                      const isCurrent = st.status === item.code;
+                                      const isCurrent = st.isRecorded && st.status === item.code;
                                       return (
                                         <button
                                           key={item.code}
@@ -1594,7 +1576,7 @@ export default function ClassAttendanceCalendar({
                                               activeJadwalId
                                             )
                                           }
-                                          title={`Ubah status ${activeScheduleObj?.mata_pelajaran?.nama_mapel || 'mapel'} menjadi ${item.label}`}
+                                          title={isCurrent ? 'Klik untuk membatalkan presensi (kembali ke Belum Diabsen)' : `Ubah status ${activeScheduleObj?.mata_pelajaran?.nama_mapel || 'mapel'} menjadi ${item.label}`}
                                           className={`w-7 h-7 sm:w-8 sm:h-8 rounded-xl text-[11px] font-black border transition-all cursor-pointer flex items-center justify-center ${
                                             isCurrent
                                               ? `${item.activeColor} shadow-sm ring-2 ring-indigo-500/30 scale-105`

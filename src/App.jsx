@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useAuth } from './context/AuthContext';
+import { useToast } from './context/ToastModalContext';
 import LoginPage from './pages/LoginPage';
 import MuridDashboard from './pages/MuridDashboard';
 import GuruDashboard from './pages/GuruDashboard';
@@ -10,7 +11,52 @@ import { ShieldAlert } from 'lucide-react';
 import PwaInstallPrompt from './components/PwaInstallPrompt';
 
 export default function App() {
-  const { session, userProfile, loading } = useAuth();
+  const { session, userProfile, loading, logout } = useAuth() || {};
+  const { showConfirm } = useToast() || {};
+
+  // Intersep tombol Back pada browser / gesture swipe back di HP saat user sedang login
+  useEffect(() => {
+    if (!session || !userProfile) return;
+
+    // Tambahkan riwayat state agar event popstate bisa ditangkap tanpa mereset hash tab
+    window.history.pushState({ inAppSession: true }, '', window.location.href);
+
+    let isPrompting = false;
+
+    const handlePopState = async () => {
+      // Jika modal konfirmasi sedang terbuka, abaikan penekanan berulang
+      if (isPrompting) {
+        window.history.pushState({ inAppSession: true }, '', window.location.href);
+        return;
+      }
+
+      isPrompting = true;
+      // Pertahankan riwayat state agar aplikasi tidak keluar otomatis saat user membatalkan
+      window.history.pushState({ inAppSession: true }, '', window.location.href);
+
+      try {
+        const confirmed = await showConfirm({
+          title: 'Konfirmasi Keluar Aplikasi',
+          message: 'Anda menekan tombol kembali (Back) pada browser. Apakah Anda yakin ingin keluar dari sesi akun dan melakukan log out?',
+          type: 'warning',
+          confirmText: 'Ya, Log Out',
+          cancelText: 'Tetap di Aplikasi',
+        });
+
+        if (confirmed) {
+          await logout();
+        }
+      } finally {
+        isPrompting = false;
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [session, userProfile, showConfirm, logout]);
 
   if (loading) {
     return (

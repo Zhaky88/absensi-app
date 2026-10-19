@@ -1,8 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   X,
   Trophy,
-  Award,
   Sparkles,
   Flame,
   CheckCircle2,
@@ -12,6 +11,7 @@ import {
   FileText,
   Star,
   ExternalLink,
+  RefreshCw,
 } from 'lucide-react';
 import { calculateStudentAchievementsSummary, generateReportComment } from '../lib/achievementManager';
 
@@ -21,21 +21,38 @@ export default function StudentAchievementModal({
   onClose,
   tahunAjaran = '2026/2027',
   semesterAktif = 'Ganjil',
-  onOpenCertificate,
 }) {
   const [copiedComment, setCopiedComment] = useState(false);
   const [filterTier, setFilterTier] = useState('all');
+
+  // Reset filter tier ke 'all' setiap kali modal dibuka atau siswa berganti
+  useEffect(() => {
+    if (isOpen) {
+      setFilterTier('all');
+    }
+  }, [isOpen, student?.nis]);
 
   if (!isOpen || !student) return null;
 
   const summary = calculateStudentAchievementsSummary(student, { tahunAjaran, semesterAktif });
   const reportComment = generateReportComment(summary);
 
+  // Hitung jumlah lencana per tier secara dinamis
+  const tierCounts = {
+    all: summary.achievements.length,
+    unlocked: summary.unlockedCount,
+    locked: Math.max(0, summary.totalCount - summary.unlockedCount),
+    diamond: summary.achievements.filter((b) => String(b.tier).toLowerCase() === 'diamond').length,
+    gold: summary.achievements.filter((b) => String(b.tier).toLowerCase() === 'gold').length,
+    silver: summary.achievements.filter((b) => String(b.tier).toLowerCase() === 'silver').length,
+    bronze: summary.achievements.filter((b) => String(b.tier).toLowerCase() === 'bronze').length,
+  };
+
   const filteredAchievements = summary.achievements.filter((badge) => {
     if (filterTier === 'all') return true;
-    if (filterTier === 'unlocked') return badge.isUnlocked;
+    if (filterTier === 'unlocked') return Boolean(badge.isUnlocked);
     if (filterTier === 'locked') return !badge.isUnlocked;
-    return badge.tier === filterTier;
+    return String(badge.tier || '').toLowerCase() === filterTier.toLowerCase();
   });
 
   function handleCopyComment() {
@@ -133,29 +150,29 @@ export default function StudentAchievementModal({
           <div>
             <div className="flex items-center justify-between gap-2 mb-3">
               <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider">
-                Koleksi Lencana Siswa ({summary.unlockedCount} Terbuka)
+                Koleksi Lencana Siswa ({filteredAchievements.length} Tampil • {summary.unlockedCount} Terbuka)
               </h3>
-              {onOpenCertificate && (
+              {filterTier !== 'all' && (
                 <button
                   type="button"
-                  onClick={() => onOpenCertificate(student, summary)}
-                  className="px-3 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold rounded-xl flex items-center gap-1 cursor-pointer"
+                  onClick={() => setFilterTier('all')}
+                  className="text-[11px] font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1 cursor-pointer"
                 >
-                  <Award className="w-3.5 h-3.5" />
-                  <span>Cetak Piagam Teladan</span>
+                  <RefreshCw className="w-3 h-3" />
+                  <span>Reset Filter</span>
                 </button>
               )}
             </div>
 
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-xs font-bold">
               {[
-                { id: 'all', label: 'Semua' },
-                { id: 'unlocked', label: `Terbuka (${summary.unlockedCount})` },
-                { id: 'locked', label: `Terkunci (${summary.totalCount - summary.unlockedCount})` },
-                { id: 'diamond', label: '💎 Diamond' },
-                { id: 'gold', label: '🥇 Gold' },
-                { id: 'silver', label: '🥈 Silver' },
-                { id: 'bronze', label: '🥉 Bronze' },
+                { id: 'all', label: `Semua (${tierCounts.all})` },
+                { id: 'unlocked', label: `Terbuka (${tierCounts.unlocked})` },
+                { id: 'locked', label: `Terkunci (${tierCounts.locked})` },
+                { id: 'diamond', label: `💎 Diamond (${tierCounts.diamond})` },
+                { id: 'gold', label: `🥇 Gold (${tierCounts.gold})` },
+                { id: 'silver', label: `🥈 Silver (${tierCounts.silver})` },
+                { id: 'bronze', label: `🥉 Bronze (${tierCounts.bronze})` },
               ].map((f) => (
                 <button
                   key={f.id}
@@ -163,7 +180,7 @@ export default function StudentAchievementModal({
                   onClick={() => setFilterTier(f.id)}
                   className={`px-3 py-1 rounded-xl whitespace-nowrap transition-colors cursor-pointer ${
                     filterTier === f.id
-                      ? 'bg-blue-600 text-white shadow-xs'
+                      ? 'bg-blue-600 text-white shadow-xs font-black ring-2 ring-blue-600/30'
                       : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   }`}
                 >
@@ -173,65 +190,85 @@ export default function StudentAchievementModal({
             </div>
           </div>
 
-          {/* Grid Lencana Siswa */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {filteredAchievements.map((b) => (
-              <div
-                key={b.id}
-                className={`p-3.5 rounded-2xl border transition-all flex items-start gap-3 ${
-                  b.isUnlocked
-                    ? 'bg-white border-slate-300 shadow-xs hover:border-blue-400'
-                    : 'bg-slate-50/90 border-slate-200'
-                }`}
+          {/* Grid Lencana Siswa atau Empty State */}
+          {filteredAchievements.length === 0 ? (
+            <div className="p-10 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-300 space-y-2">
+              <div className="w-12 h-12 rounded-2xl bg-slate-200 text-slate-500 mx-auto flex items-center justify-center text-xl">
+                🏆
+              </div>
+              <h4 className="font-bold text-sm text-slate-800">Tidak Ada Lencana Pada Filter Ini</h4>
+              <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                Siswa belum memiliki lencana pada kategori yang dipilih. Silakan pilih kategori atau tier lain.
+              </p>
+              <button
+                type="button"
+                onClick={() => setFilterTier('all')}
+                className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 font-bold text-xs rounded-xl cursor-pointer transition-colors"
               >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Tampilkan Semua Lencana</span>
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {filteredAchievements.map((b) => (
                 <div
-                  className={`w-12 h-12 rounded-xl flex items-center justify-center text-2xl shrink-0 shadow-inner ${
+                  key={b.id}
+                  className={`p-3.5 rounded-2xl border transition-all flex items-start gap-3 ${
                     b.isUnlocked
-                      ? 'bg-amber-100 border border-amber-300 text-amber-950 shadow-amber-200/50'
-                      : 'bg-slate-200/80 border border-slate-300 grayscale opacity-80'
+                      ? 'bg-white border-slate-300 shadow-xs hover:border-blue-400'
+                      : 'bg-slate-50/90 border-slate-200'
                   }`}
                 >
-                  <span>{b.icon}</span>
-                </div>
-
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between gap-1 mb-1">
-                    <span className="font-extrabold text-xs text-slate-900 truncate">{b.title}</span>
-                    <span className="font-mono text-[10px] font-black text-indigo-800 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-200 shrink-0">
-                      +{b.xp} XP
-                    </span>
+                  <div
+                    className={`w-12 h-12 rounded-xl flex items-center justify-center text-2xl shrink-0 shadow-inner ${
+                      b.isUnlocked
+                        ? 'bg-amber-100 border border-amber-300 text-amber-950 shadow-amber-200/50'
+                        : 'bg-slate-200/80 border border-slate-300 grayscale opacity-80'
+                    }`}
+                  >
+                    <span>{b.icon}</span>
                   </div>
-                  <p className="text-[11px] text-slate-700 font-medium leading-relaxed mb-2.5">
-                    {b.description}
-                  </p>
-                  <div className="space-y-1.5 pt-1.5 border-t border-slate-200/60">
-                    <div className="flex items-center justify-between text-[11px] font-bold">
-                      {b.isUnlocked ? (
-                        <span className="text-emerald-700 flex items-center gap-1 font-extrabold">
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Terbuka
-                        </span>
-                      ) : (
-                        <span className="text-slate-700 flex items-center gap-1">
-                          <Lock className="w-3 h-3 text-slate-500" /> Progres: <strong>{b.currentProgress}/{b.maxProgress} {b.unit}</strong>
-                        </span>
-                      )}
-                      <span className="text-slate-600 uppercase text-[10px] font-black px-1.5 py-0.2 rounded bg-slate-200/70">{b.tier}</span>
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-1 mb-1">
+                      <span className="font-extrabold text-xs text-slate-900 truncate">{b.title}</span>
+                      <span className="font-mono text-[10px] font-black text-indigo-800 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-200 shrink-0">
+                        +{b.xp} XP
+                      </span>
                     </div>
-
-                    {/* Progress Bar Kontras Tinggi */}
-                    {!b.isUnlocked && (
-                      <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-blue-600 rounded-full"
-                          style={{ width: `${Math.min(100, Math.round((b.currentProgress / b.maxProgress) * 100))}%` }}
-                        />
+                    <p className="text-[11px] text-slate-700 font-medium leading-relaxed mb-2.5">
+                      {b.description}
+                    </p>
+                    <div className="space-y-1.5 pt-1.5 border-t border-slate-200/60">
+                      <div className="flex items-center justify-between text-[11px] font-bold">
+                        {b.isUnlocked ? (
+                          <span className="text-emerald-700 flex items-center gap-1 font-extrabold">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Terbuka
+                          </span>
+                        ) : (
+                          <span className="text-slate-700 flex items-center gap-1">
+                            <Lock className="w-3 h-3 text-slate-500" /> Progres: <strong>{b.currentProgress}/{b.maxProgress} {b.unit}</strong>
+                          </span>
+                        )}
+                        <span className="text-slate-600 uppercase text-[10px] font-black px-1.5 py-0.2 rounded bg-slate-200/70">{b.tier}</span>
                       </div>
-                    )}
+
+                      {/* Progress Bar Kontras Tinggi */}
+                      {!b.isUnlocked && (
+                        <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-blue-600 rounded-full"
+                            style={{ width: `${Math.min(100, Math.round((b.currentProgress / b.maxProgress) * 100))}%` }}
+                          />
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Footer */}

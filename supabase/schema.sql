@@ -22,7 +22,7 @@ EXCEPTION
 END $$;
 
 DO $$ BEGIN
-    CREATE TYPE status_absen_enum AS ENUM ('H', 'S', 'I', 'A', 'T');
+    CREATE TYPE status_absen_enum AS ENUM ('H', 'S', 'I', 'A');
 EXCEPTION
     WHEN duplicate_object THEN null;
 END $$;
@@ -382,7 +382,6 @@ VALUES
     ('wa_gateway_api_url', 'https://api.fonnte.com/send', 'URL Endpoint WA Gateway / Fonnte / Watzap'),
     ('wa_gateway_api_key', 'SAMPLE_FONNTE_KEY_XYZ123', 'API Token WhatsApp Gateway'),
     ('wa_template_alpa', 'Pemberitahuan: Bpk/Ibu {{nama_ortu}}, ananda {{nama_siswa}} (NIS: {{nis}}) tercatat ALPA pada {{tanggal}}.', 'Template pesan WA jika siswa alpa'),
-    ('wa_template_terlambat', 'Pemberitahuan: Ananda {{nama_siswa}} terlambat hadir pada mapel {{mapel}} pukul {{waktu}}.', 'Template pesan WA jika terlambat'),
     ('wa_template_streak', 'Apresiasi: Selamat! Ananda {{nama_siswa}} telah mencapai Attendance Streak {{streak}} Hari berturut-turut! Tetap pertahankan prestasi ini!', 'Template WA milestone streak')
 ON CONFLICT (kunci) DO UPDATE SET nilai = EXCLUDED.nilai;
 

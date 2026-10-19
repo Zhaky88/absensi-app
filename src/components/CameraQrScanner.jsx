@@ -86,6 +86,7 @@ export default function CameraQrScanner({
           await html5QrCodeRef.current.stop();
         }
         await html5QrCodeRef.current.clear();
+        html5QrCodeRef.current = null;
       }
     } catch (e) {
       console.warn('Scanner cleanup note:', e);
@@ -97,45 +98,68 @@ export default function CameraQrScanner({
     setErrorMessage(null);
     setPermissionError(false);
 
+    // Cek protokol keamanan browser (kamera memerlukan HTTPS atau localhost)
+    if (
+      typeof window !== 'undefined' &&
+      !window.isSecureContext &&
+      window.location.hostname !== 'localhost' &&
+      window.location.hostname !== '127.0.0.1'
+    ) {
+      setErrorMessage(
+        'Akses kamera memerlukan protokol aman (HTTPS). Pastikan Anda membuka link web dengan awalan https:// (misal URL Netlify).'
+      );
+      setIsStarting(false);
+      return;
+    }
+
     try {
       // 1. Dapatkan daftar perangkat video yang tersedia
-      const availableCameras = await Html5Qrcode.getCameras();
+      let availableCameras = [];
+      try {
+        availableCameras = await Html5Qrcode.getCameras();
+      } catch (camErr) {
+        console.warn('Initial getCameras note (will fallback to default lens):', camErr);
+      }
+
       if (!isMountedRef.current) return;
 
-      if (!availableCameras || availableCameras.length === 0) {
-        setErrorMessage('Tidak ada kamera yang terdeteksi di perangkat ini.');
-        setIsStarting(false);
-        return;
-      }
+      if (availableCameras && availableCameras.length > 0) {
+        setCameras(availableCameras);
 
-      setCameras(availableCameras);
+        // Pilih kamera ideal (prioritaskan kamera belakang di HP)
+        let targetCamera = null;
+        if (preferredCameraId) {
+          targetCamera = availableCameras.find((c) => c.id === preferredCameraId) || availableCameras[0];
+        } else {
+          const backCamera = availableCameras.find((c) => {
+            const lbl = (c.label || '').toLowerCase();
+            return (
+              lbl.includes('back') ||
+              lbl.includes('belakang') ||
+              lbl.includes('rear') ||
+              lbl.includes('environment')
+            );
+          });
+          targetCamera = backCamera || availableCameras[0];
+        }
 
-      // 2. Pilih kamera ideal:
-      // Di Handphone: Cari kamera belakang (label mengandung back/belakang/environment)
-      // Di Laptop/PC: Gunakan kamera yang ada (webcam bawaan)
-      let targetCamera = null;
-      if (preferredCameraId) {
-        targetCamera = availableCameras.find((c) => c.id === preferredCameraId) || availableCameras[0];
+        setSelectedCameraId(targetCamera.id);
+        setCameraLabel(targetCamera.label || (availableCameras.length > 1 ? 'Kamera Utama' : 'Kamera Perangkat'));
+
+        await startScanning(targetCamera.id);
       } else {
-        const backCamera = availableCameras.find((c) => {
-          const lbl = (c.label || '').toLowerCase();
-          return lbl.includes('back') || lbl.includes('belakang') || lbl.includes('rear') || lbl.includes('environment');
-        });
-        targetCamera = backCamera || availableCameras[0];
+        // Fallback cerdas: Jika izin belum diberikan atau enumerateDevices kosong, langsung minta stream kamera belakang
+        setSelectedCameraId('environment');
+        setCameraLabel('Kamera Belakang (Otomatis)');
+        await startScanning({ facingMode: 'environment' });
       }
-
-      setSelectedCameraId(targetCamera.id);
-      setCameraLabel(targetCamera.label || (availableCameras.length > 1 ? 'Kamera Utama' : 'Kamera Perangkat'));
-
-      // 3. Mulai scanning dengan Html5Qrcode instance
-      await startScanning(targetCamera.id);
     } catch (err) {
       if (!isMountedRef.current) return;
       console.error('Error getting cameras:', err);
       const errMsg = err?.message || String(err);
       if (errMsg.toLowerCase().includes('permission') || errMsg.toLowerCase().includes('not allowed')) {
         setPermissionError(true);
-        setErrorMessage('Izin akses kamera belum diberikan. Mohon klik izin (Allow) pada browser Anda.');
+        setErrorMessage('Izin akses kamera belum diberikan. Mohon klik tombol Izinkan (Allow) pada browser Anda.');
       } else {
         setErrorMessage(`Gagal mengakses kamera: ${errMsg}`);
       }
@@ -143,7 +167,7 @@ export default function CameraQrScanner({
     }
   }
 
-  async function startScanning(cameraId) {
+  async function startScanning(cameraConfig) {
     try {
       await stopActiveScanner();
       if (!isMountedRef.current) return;
@@ -164,7 +188,7 @@ export default function CameraQrScanner({
       };
 
       await scannerInstance.start(
-        cameraId,
+        cameraConfig,
         config,
         (decodedText, decodedResult) => {
           // Cegah spam/multiple scan berturut-turut dalam 1.5 detik
@@ -188,6 +212,18 @@ export default function CameraQrScanner({
       setIsScanning(true);
       setIsStarting(false);
 
+      // Setelah izin disetujui dan kamera aktif, perbarui daftar kamera yang tersedia
+      try {
+        const freshCameras = await Html5Qrcode.getCameras();
+        if (freshCameras && freshCameras.length > 0 && isMountedRef.current) {
+          setCameras(freshCameras);
+          if (typeof cameraConfig === 'string') {
+            const matched = freshCameras.find((c) => c.id === cameraConfig);
+            if (matched?.label) setCameraLabel(matched.label);
+          }
+        }
+      } catch (e) {}
+
       // Cek apakah kamera mendukung senter / torch (umum di ponsel)
       try {
         const capabilities = scannerInstance.getRunningTrackCapabilities?.();
@@ -205,7 +241,7 @@ export default function CameraQrScanner({
       const errMsg = err?.message || String(err);
       if (errMsg.toLowerCase().includes('permission') || errMsg.toLowerCase().includes('not allowed')) {
         setPermissionError(true);
-        setErrorMessage('Akses kamera ditolak. Berikan izin kamera di pengaturan browser.');
+        setErrorMessage('Akses kamera ditolak. Mohon aktifkan izin kamera pada browser Anda.');
       } else {
         setErrorMessage(`Gagal memulai kamera: ${errMsg}`);
       }
@@ -216,17 +252,29 @@ export default function CameraQrScanner({
 
   // Ganti Kamera (Depan <-> Belakang)
   async function handleSwitchCamera() {
-    if (cameras.length <= 1) return;
-    const currentIdx = cameras.findIndex((c) => c.id === selectedCameraId);
-    const nextIdx = (currentIdx + 1) % cameras.length;
-    const nextCamera = cameras[nextIdx];
+    if (isStarting) return;
 
-    setIsStarting(true);
-    setSelectedCameraId(nextCamera.id);
-    setCameraLabel(nextCamera.label || `Kamera ${nextIdx + 1}`);
-    setTorchOn(false);
+    if (cameras.length > 1) {
+      const currentIdx = cameras.findIndex((c) => c.id === selectedCameraId);
+      const nextIdx = (currentIdx + 1) % cameras.length;
+      const nextCamera = cameras[nextIdx];
 
-    await startScanning(nextCamera.id);
+      setIsStarting(true);
+      setSelectedCameraId(nextCamera.id);
+      setCameraLabel(nextCamera.label || `Kamera ${nextIdx + 1}`);
+      setTorchOn(false);
+
+      await startScanning(nextCamera.id);
+    } else {
+      // Fallback ganti facingMode (user <-> environment)
+      const nextFacing = selectedCameraId === 'user' ? 'environment' : 'user';
+      setIsStarting(true);
+      setSelectedCameraId(nextFacing);
+      setCameraLabel(nextFacing === 'user' ? 'Kamera Depan' : 'Kamera Belakang');
+      setTorchOn(false);
+
+      await startScanning({ facingMode: nextFacing });
+    }
   }
 
   // Toggle Senter / Torch (Flash ponsel)

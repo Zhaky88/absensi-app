@@ -15,6 +15,7 @@ import {
   Layers,
   Save,
   CheckCircle2,
+  ExternalLink,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useToast } from '../context/ToastModalContext';
@@ -29,6 +30,18 @@ export default function JurnalKbmReportModal({
 }) {
   const { toast } = useToast();
   const printRef = useRef(null);
+
+  // Sync body class for print isolation
+  useEffect(() => {
+    if (isOpen) {
+      document.body.classList.add('print-modal-open');
+    } else {
+      document.body.classList.remove('print-modal-open');
+    }
+    return () => {
+      document.body.classList.remove('print-modal-open');
+    };
+  }, [isOpen]);
 
   // Inisialisasi Identitas Resmi Sekolah & Kepala Sekolah
   const savedSettings = (() => {
@@ -301,11 +314,72 @@ export default function JurnalKbmReportModal({
     }
   }
 
+  // Sync body class for print isolation
+  useEffect(() => {
+    if (isOpen) {
+      document.body.classList.add('print-modal-open');
+    } else {
+      document.body.classList.remove('print-modal-open');
+    }
+    return () => {
+      document.body.classList.remove('print-modal-open');
+    };
+  }, [isOpen]);
+
   // 2. Cetak ke PDF
   function handlePrintPdf() {
+    if (!selectedTeacher) {
+      toast.error('Pilih data guru terlebih dahulu.');
+      return;
+    }
+    if (!journalEntries || journalEntries.length === 0) {
+      toast.error('Belum ada catatan agenda KBM yang dapat dicetak pada periode ini.');
+      return;
+    }
     setTimeout(() => {
       window.print();
     }, 150);
+  }
+
+  function handleOpenNewTab() {
+    if (!selectedTeacher) {
+      toast.error('Pilih data guru terlebih dahulu.');
+      return;
+    }
+    if (!journalEntries || journalEntries.length === 0) {
+      toast.error('Belum ada catatan agenda KBM yang dapat dicetak pada periode ini.');
+      return;
+    }
+    const printEl = document.getElementById('printArea');
+    if (!printEl) {
+      window.print();
+      return;
+    }
+    const teacherName = (selectedTeacher.nama || 'Guru').replace(/[^a-zA-Z0-9]/g, '_');
+    const htmlContent = `<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <title>Buku_Jurnal_Mengajar_${teacherName}</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap');
+    @page { size: A4 landscape; margin: 8mm 10mm; }
+    * { box-sizing: border-box; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+    body { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; margin: 0; padding: 12px; font-size: 10px; color: #000; background: #fff; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 9.5px; }
+    th, td { border: 1px solid #334155; padding: 5px 6px; }
+    th { background: #f1f5f9; text-transform: uppercase; font-size: 9px; font-weight: 800; text-align: left; }
+    tr { page-break-inside: avoid; }
+    .no-print { display: none !important; }
+  </style>
+</head>
+<body>
+  ${printEl.innerHTML}
+</body>
+</html>`;
+    const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
   }
 
   function formatDateIndo(dateStr) {
@@ -327,11 +401,13 @@ export default function JurnalKbmReportModal({
         @media print {
           @page {
             size: A4 landscape;
-            margin: 8mm;
+            margin: 6mm 8mm;
           }
           body {
             background: #ffffff !important;
             color: #000000 !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
           }
           body * {
             visibility: hidden;
@@ -340,7 +416,7 @@ export default function JurnalKbmReportModal({
             visibility: visible;
           }
           #printArea {
-            position: absolute !important;
+            position: relative !important;
             left: 0 !important;
             top: 0 !important;
             width: 100% !important;
@@ -350,6 +426,33 @@ export default function JurnalKbmReportModal({
             background: #ffffff !important;
             box-shadow: none !important;
             border: none !important;
+            zoom: 88% !important;
+          }
+          table {
+            width: 100% !important;
+            table-layout: auto !important;
+          }
+          th, td {
+            padding: 4px 6px !important;
+            word-break: break-word !important;
+          }
+          .document-header, .kop-surat {
+            page-break-after: avoid !important;
+            break-after: avoid !important;
+          }
+          thead {
+            display: table-header-group !important;
+          }
+          tfoot {
+            display: table-footer-group !important;
+          }
+          tr {
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+          }
+          .signature-block {
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
           }
           .no-print, [data-no-print="true"] {
             display: none !important;
@@ -536,8 +639,8 @@ export default function JurnalKbmReportModal({
             </div>
 
             {/* TABEL UTAMA JURNAL AGENDA PEMBELAJARAN */}
-            <div className="overflow-x-auto print:overflow-visible">
-              <table className="w-full text-left border-collapse border border-slate-300 text-xs print:text-[10.5px]">
+            <div className="overflow-x-auto print:overflow-visible pb-1">
+              <table className="w-full min-w-[700px] text-left border-collapse border border-slate-300 text-xs print:text-[10.5px]">
                 <thead className="bg-slate-100 text-slate-800 font-bold uppercase text-[11px]">
                   <tr>
                     <th className="border border-slate-300 p-2 text-center w-8">No</th>
@@ -654,6 +757,16 @@ export default function JurnalKbmReportModal({
             >
               <FileSpreadsheet className="w-4 h-4" />
               <span>Unduh Excel (.xlsx)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleOpenNewTab}
+              className="px-3.5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs rounded-xl border border-indigo-200 transition-all cursor-pointer flex items-center gap-1.5"
+              title="Buka dokumen di tab baru browser lalu tekan Ctrl+P"
+            >
+              <ExternalLink className="w-4 h-4 text-indigo-600" />
+              <span>Buka di Tab Baru</span>
             </button>
 
             <button

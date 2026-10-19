@@ -68,9 +68,9 @@ export default function PublicAttendanceCheckerModal({ isOpen, onClose, initialN
       const st = siswaArr[0];
       setStudentData(st);
 
-      // 2. Ambil riwayat presensi siswa 15 hari terakhir
+      // 2. Ambil riwayat presensi siswa 20 catatan terakhir
       const { data: absensiArr, error: absensiErr } = await supabase
-        .from('absensi_harian')
+        .from('absensi')
         .select(`
           id_absensi,
           tanggal,
@@ -101,17 +101,16 @@ export default function PublicAttendanceCheckerModal({ isOpen, onClose, initialN
     (acc, curr) => {
       const s = (curr.status || '').toUpperCase();
       if (s === 'H') acc.hadir++;
-      else if (s === 'T') acc.terlambat++;
       else if (s === 'I') acc.izin++;
       else if (s === 'S') acc.sakit++;
       else if (s === 'A') acc.alpha++;
       return acc;
     },
-    { hadir: 0, terlambat: 0, izin: 0, sakit: 0, alpha: 0 }
+    { hadir: 0, izin: 0, sakit: 0, alpha: 0 }
   );
 
   const totalLogs = attendanceLogs.length;
-  const attendanceRate = totalLogs > 0 ? Math.round(((stats.hadir + stats.terlambat) / totalLogs) * 100) : 100;
+  const attendanceRate = totalLogs > 0 ? Math.round((stats.hadir / totalLogs) * 100) : 0;
 
   return (
     <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in">
@@ -160,7 +159,7 @@ export default function PublicAttendanceCheckerModal({ isOpen, onClose, initialN
             </button>
           </form>
           <div className="flex items-center justify-between text-[11px] text-slate-400 mt-2 px-1">
-            <span>Contoh NIS demo: <strong>202409001</strong>, <strong>202409002</strong></span>
+            <span>Contoh NIS siswa: <strong>202409001</strong>, <strong>202409010</strong>, <strong>202409017</strong></span>
             <span className="text-emerald-600 font-semibold flex items-center gap-1">
               <Sparkles className="w-3 h-3" /> Data langsung dari sistem absensi sekolah
             </span>
@@ -215,7 +214,9 @@ export default function PublicAttendanceCheckerModal({ isOpen, onClose, initialN
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                 <div className="p-3 bg-emerald-50 rounded-2xl border border-emerald-100 text-center">
                   <span className="text-[10px] font-bold text-emerald-700 block">Tingkat Hadir</span>
-                  <span className="text-lg font-black text-emerald-600">{attendanceRate}%</span>
+                  <span className="text-lg font-black text-emerald-600">
+                    {totalLogs > 0 ? `${attendanceRate}%` : '-'}
+                  </span>
                 </div>
                 <div className="p-3 bg-blue-50 rounded-2xl border border-blue-100 text-center">
                   <span className="text-[10px] font-bold text-blue-700 block">Total Hadir (H)</span>
@@ -249,8 +250,7 @@ export default function PublicAttendanceCheckerModal({ isOpen, onClose, initialN
                     {attendanceLogs.map((log) => {
                       const stUpper = (log.status || '').toUpperCase();
                       const statusMap = {
-                        H: { label: 'Hadir Tepat Waktu', bg: 'bg-emerald-50 text-emerald-700 border-emerald-200', icon: CheckCircle2 },
-                        T: { label: 'Terlambat', bg: 'bg-amber-50 text-amber-700 border-amber-200', icon: Clock },
+                        H: { label: 'Hadir', bg: 'bg-emerald-50 text-emerald-700 border-emerald-200', icon: CheckCircle2 },
                         I: { label: 'Izin', bg: 'bg-blue-50 text-blue-700 border-blue-200', icon: AlertTriangle },
                         S: { label: 'Sakit', bg: 'bg-purple-50 text-purple-700 border-purple-200', icon: AlertTriangle },
                         A: { label: 'Tanpa Keterangan (Alpha)', bg: 'bg-rose-50 text-rose-700 border-rose-200', icon: XCircle },

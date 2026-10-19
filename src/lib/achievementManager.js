@@ -189,7 +189,7 @@ export function getMasterAchievements({
       tier: 'silver',
       xp: 150,
       title: 'Fondasi Disiplin Belajar',
-      description: 'Menjaga kehadiran 20 hari KBM di kelas 7 tanpa terlambat maupun alpa.',
+      description: 'Menjaga kehadiran 20 hari KBM di kelas 7 tanpa alpa.',
       icon: '🐣',
       isUnlocked: hadir >= 20,
       currentProgress: Math.min(20, hadir),
@@ -267,7 +267,7 @@ export function getMasterAchievements({
       periodScope: 'all',
       tier: 'silver',
       xp: 180,
-      title: 'Benteng Kehadiran Rombel',
+      title: 'Benteng Kehadiran Kelas',
       description: 'Mencapai streak 25 hari beruntun saat aktif di jenjang kelas 8.',
       icon: '🏰',
       isUnlocked: grade >= 8 && streak >= 25,
@@ -423,7 +423,7 @@ export function getMasterAchievements({
       tier: 'silver',
       xp: 180,
       title: `September Gemilang (${tahunAjaran})`,
-      description: 'Hadir 100% tanpa alpa dan tanpa terlambat lebih dari 1 kali di sepanjang bulan September 2026.',
+      description: 'Hadir 100% tanpa alpa di sepanjang bulan September 2026.',
       icon: '🍁',
       isUnlocked: false,
       currentProgress: 12,
@@ -520,7 +520,7 @@ export function getMasterAchievements({
       tier: 'silver',
       xp: 160,
       title: `Resolusi Genap ${tahunAjaran}`,
-      description: 'Memulai awal tahun baru dengan kehadiran konsisten tanpa terlambat di bulan Januari 2027.',
+      description: 'Memulai awal tahun baru dengan kehadiran konsisten tanpa alpa di bulan Januari 2027.',
       icon: '🌱',
       isUnlocked: false,
       currentProgress: 0,
@@ -641,9 +641,9 @@ export function calculateStudentAchievementsSummary(student, options = {}) {
   if (gradeStr.includes('IX') || gradeStr.includes('9')) grade = 9;
   else if (gradeStr.includes('VIII') || gradeStr.includes('8')) grade = 8;
 
-  const streak = student?.streak_sekarang || 0;
-  const hadir = student?.total_hadir || Math.max(streak, 12);
-  const rank = student?.rank || 1;
+  const streak = Number(student?.periodStreak !== undefined ? student.periodStreak : student?.streak_sekarang) || 0;
+  const hadir = Number(student?.total_hadir !== undefined ? student.total_hadir : Math.max(streak, 12)) || 0;
+  const rank = Number(student?.rank) || 1;
 
   const achievements = getMasterAchievements({
     studentGrade: grade,
@@ -1334,7 +1334,7 @@ export function evaluateCustomMissionForStudent(mission, studentContext = {}) {
     const matchingEarly = attendanceHistory.filter((a) => {
       const matchMonth = missionMonth ? a.tanggal && a.tanggal.includes(`-${missionMonth}-`) : true;
       const isEarly = a.waktu && a.waktu <= '07:15';
-      const isPresent = a.status === 'H' || a.status === 'T';
+      const isPresent = a.status === 'H';
       return matchMonth && isEarly && isPresent;
     });
     currentProgress = Math.min(target, matchingEarly.length);
@@ -1344,7 +1344,7 @@ export function evaluateCustomMissionForStudent(mission, studentContext = {}) {
       attendanceHistory
         .filter((a) => {
           const matchMonth = missionMonth ? a.tanggal && a.tanggal.includes(`-${missionMonth}-`) : true;
-          const isPresent = a.status === 'H' || a.status === 'T';
+          const isPresent = a.status === 'H';
           return matchMonth && isPresent;
         })
         .map((a) => a.tanggal)
@@ -1426,4 +1426,306 @@ export function evaluateCustomMissionForStudent(mission, studentContext = {}) {
     missionStatusReason,
     unlockedDate: isUnlocked ? 'Tercapai' : null,
   };
+}
+
+/**
+ * Menghitung Total Hari Efektif Satu Semester Berdasarkan Kalender Akademik
+ */
+export function calculateSemesterEffectiveDays(tahunAjaran = '2026/2027', semester = 'Ganjil', holidays = []) {
+  const isGanjil = (semester || '').toLowerCase() === 'ganjil';
+  const year1 = (tahunAjaran || '2026/2027').split('/')[0] || '2026';
+  const year2 = (tahunAjaran || '2026/2027').split('/')[1] || '2027';
+  const months = isGanjil ? ['07', '08', '09', '10', '11', '12'] : ['01', '02', '03', '04', '05', '06'];
+  const yr = isGanjil ? year1 : year2;
+
+  let totalEffectiveDays = 0;
+  const breakdown = {};
+  months.forEach((m) => {
+    const days = calculateEffectiveSchoolDays(yr, m, holidays);
+    totalEffectiveDays += days;
+    breakdown[m] = days;
+  });
+
+  return { totalEffectiveDays, breakdown, year: yr, months };
+}
+
+/**
+ * Menghitung Hari Efektif yang Telah Berjalan Hingga Tanggal Tertentu
+ */
+export function calculateElapsedEffectiveSchoolDays(tahunAjaran = '2026/2027', semester = 'Ganjil', holidays = [], targetDate = new Date()) {
+  const isGanjil = (semester || '').toLowerCase() === 'ganjil';
+  const year1 = Number((tahunAjaran || '2026/2027').split('/')[0]) || 2026;
+  const year2 = Number((tahunAjaran || '2026/2027').split('/')[1]) || 2027;
+
+  const startYear = isGanjil ? year1 : year2;
+  const startMonth = isGanjil ? 6 : 0; // 6 = Juli, 0 = Januari
+  const startDate = new Date(startYear, startMonth, 1);
+
+  const endYear = isGanjil ? year1 : year2;
+  const endMonth = isGanjil ? 11 : 5; // 11 = Desember, 5 = Juni
+  const endDate = new Date(endYear, endMonth + 1, 0);
+
+  let checkDate = new Date(targetDate);
+  if (checkDate < startDate) return 0;
+  if (checkDate > endDate) checkDate = endDate;
+
+  const holidayDates = new Set();
+  (holidays || []).forEach((h) => {
+    if (h && h.tanggal && h.is_libur !== false) {
+      holidayDates.add(h.tanggal);
+    }
+  });
+
+  let elapsedDays = 0;
+  const cur = new Date(startDate);
+  while (cur <= checkDate) {
+    const dayOfWeek = cur.getDay();
+    if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+      const y = cur.getFullYear();
+      const m = String(cur.getMonth() + 1).padStart(2, '0');
+      const d = String(cur.getDate()).padStart(2, '0');
+      const dateStr = `${y}-${m}-${d}`;
+      if (!holidayDates.has(dateStr)) {
+        elapsedDays++;
+      }
+    }
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  return elapsedDays;
+}
+
+/**
+ * Menghitung Agregat dan Klasemen Kelas Terdisiplin (% Kehadiran & Kekompakan)
+ * Selaras dengan Kalender Akademik dan Rekor Streak Murid
+ */
+export function calculateClassDisciplineLeaderboard(classes = [], students = [], holidays = [], options = {}) {
+  const { 
+    tahunAjaran = '2026/2027', 
+    semester = 'Ganjil', 
+    targetDate = new Date(),
+    attendanceRecords = [] 
+  } = options;
+  const elapsedDays = Math.max(1, calculateElapsedEffectiveSchoolDays(tahunAjaran, semester, holidays, targetDate));
+  const semesterDays = calculateSemesterEffectiveDays(tahunAjaran, semester, holidays);
+
+  // Jika attendanceRecords diberikan, buat map tanggal unik hadir ('H' atau 'T') per siswa
+  const studentRealAttendanceMap = new Map();
+  if (Array.isArray(attendanceRecords) && attendanceRecords.length > 0) {
+    attendanceRecords.forEach((rec) => {
+      if (!rec || !rec.nis || !rec.tanggal) return;
+      const st = String(rec.status || '').toUpperCase();
+      if (st === 'H' || st === 'T') {
+        if (!studentRealAttendanceMap.has(String(rec.nis))) {
+          studentRealAttendanceMap.set(String(rec.nis), new Set());
+        }
+        studentRealAttendanceMap.get(String(rec.nis)).add(rec.tanggal);
+      }
+    });
+  }
+
+  const sortedClasses = classes.map((c) => {
+    const classStudents = students.filter((s) => String(s.id_kelas) === String(c.id_kelas));
+    const totalStudents = classStudents.length;
+
+    if (totalStudents === 0) {
+      return {
+        ...c,
+        totalStudents: 0,
+        percentage: 0,
+        avgActiveStreak: 0,
+        avgRecordStreak: 0,
+        totalActiveStreak: 0,
+        perfectStreakCount: 0,
+        scoreIndex: 0,
+        elapsedDays,
+        totalSemesterDays: semesterDays.totalEffectiveDays,
+      };
+    }
+
+    const totalActiveStreak = classStudents.reduce((acc, s) => acc + (Number(s.streak_sekarang) || 0), 0);
+    const totalRecordStreak = classStudents.reduce((acc, s) => acc + (Number(s.streak_tertinggi || s.streak_sekarang) || 0), 0);
+    const avgActiveStreak = Math.round((totalActiveStreak / totalStudents) * 10) / 10;
+    const avgRecordStreak = Math.round((totalRecordStreak / totalStudents) * 10) / 10;
+
+    let percentage = 0;
+    if (studentRealAttendanceMap.size > 0) {
+      // 1. Perhitungan 100% Empiris Berbasis Riwayat Absensi Riil Kalender Akademik
+      let totalHadirRiil = 0;
+      classStudents.forEach((st) => {
+        const studentDaysSet = studentRealAttendanceMap.get(String(st.nis));
+        const attendedCount = studentDaysSet ? studentDaysSet.size : 0;
+        totalHadirRiil += Math.min(elapsedDays, attendedCount);
+      });
+      const expectedTotal = totalStudents * elapsedDays;
+      percentage = Math.min(100, Math.max(0, Math.round((totalHadirRiil / expectedTotal) * 1000) / 10));
+    } else {
+      // 2. Perhitungan Estimasi Presisi Berbasis Konsistensi Kehadiran & Rekor Streak Murid
+      // Menjamin keadilan bagi siswa yang sempat izin/sakit namun memiliki rekor hadir tinggi
+      let totalEstimatedAttended = 0;
+      classStudents.forEach((st) => {
+        const curr = Number(st.streak_sekarang) || 0;
+        const maxS = Number(st.streak_tertinggi || st.streak_sekarang) || 0;
+        const bestStreak = Math.min(elapsedDays, Math.max(curr, maxS));
+        // Estimasi kehadiran riil: hari aktif dasar + bobot streak aktif
+        const estimated = Math.min(elapsedDays, Math.max(bestStreak, Math.round(elapsedDays * 0.88 + curr * 0.12)));
+        totalEstimatedAttended += estimated;
+      });
+      const expectedTotal = totalStudents * elapsedDays;
+      const calculatedPct = Math.round((totalEstimatedAttended / expectedTotal) * 1000) / 10;
+      percentage = Math.min(100, Math.max(0, calculatedPct));
+    }
+
+    // Siswa hadir konsisten di pekan aktif (maks. 5 hari kerja sekolah)
+    const perfectStreakCount = classStudents.filter((s) => (Number(s.streak_sekarang) || 0) >= Math.min(5, elapsedDays)).length;
+    // Score Index gabungan: 70% persentase kehadiran riil + 30% indeks kekompakan streak kelas
+    const streakIndex = Math.min(100, (avgActiveStreak / Math.max(1, Math.min(15, elapsedDays))) * 100);
+    const scoreIndex = Math.round((percentage * 0.7 + streakIndex * 0.3) * 10) / 10;
+
+    return {
+      ...c,
+      totalStudents,
+      percentage: Math.min(100, Math.round(percentage * 10) / 10),
+      avgActiveStreak,
+      avgRecordStreak,
+      totalActiveStreak,
+      perfectStreakCount,
+      scoreIndex,
+      elapsedDays,
+      totalSemesterDays: semesterDays.totalEffectiveDays,
+    };
+  }).sort((a, b) => b.percentage - a.percentage || b.avgActiveStreak - a.avgActiveStreak || b.avgRecordStreak - a.avgRecordStreak);
+
+  return assignSharedRanks(sortedClasses, (a, b) => 
+    a.percentage === b.percentage && 
+    a.avgActiveStreak === b.avgActiveStreak
+  );
+}
+
+/**
+ * Komparasi Rata-rata Kedisiplinan Antar Tingkat / Angkatan (Tingkat 7 vs 8 vs 9)
+ */
+export function calculateGradeDisciplineComparison(classes = [], students = [], holidays = [], options = {}) {
+  const classLeaderboard = calculateClassDisciplineLeaderboard(classes, students, holidays, options);
+
+  const grades = {
+    '7': { tingkat: 7, label: 'Tingkat VII (Kelas 7)', color: 'from-blue-500 to-indigo-600', badgeColor: 'bg-blue-100 text-blue-800 border-blue-300', totalStudents: 0, classesCount: 0, totalPercentage: 0, avgStreak: 0, totalStreak: 0, classes: [] },
+    '8': { tingkat: 8, label: 'Tingkat VIII (Kelas 8)', color: 'from-amber-500 to-orange-600', badgeColor: 'bg-amber-100 text-amber-800 border-amber-300', totalStudents: 0, classesCount: 0, totalPercentage: 0, avgStreak: 0, totalStreak: 0, classes: [] },
+    '9': { tingkat: 9, label: 'Tingkat IX (Kelas 9)', color: 'from-emerald-500 to-teal-600', badgeColor: 'bg-emerald-100 text-emerald-800 border-emerald-300', totalStudents: 0, classesCount: 0, totalPercentage: 0, avgStreak: 0, totalStreak: 0, classes: [] },
+  };
+
+  classLeaderboard.forEach((c) => {
+    const t = String(c.tingkat || (c.nama_kelas?.startsWith('IX') ? '9' : c.nama_kelas?.startsWith('VIII') ? '8' : '7'));
+    if (grades[t]) {
+      grades[t].classesCount++;
+      grades[t].totalStudents += (c.totalStudents || 0);
+      grades[t].totalPercentage += (c.percentage || 0);
+      grades[t].totalStreak += (c.totalActiveStreak || 0);
+      grades[t].classes.push(c);
+    }
+  });
+
+  const list = Object.values(grades).map((g) => {
+    const avgPercentage = g.classesCount > 0 ? Math.round((g.totalPercentage / g.classesCount) * 10) / 10 : 0;
+    const avgStreak = g.totalStudents > 0 ? Math.round((g.totalStreak / g.totalStudents) * 10) / 10 : 0;
+    return {
+      ...g,
+      percentage: avgPercentage,
+      avgStreak,
+    };
+  });
+
+  const sortedList = list.sort((a, b) => b.percentage - a.percentage || b.avgStreak - a.avgStreak);
+  const rankedGrades = assignSharedRanks(sortedList, (a, b) => 
+    a.percentage === b.percentage && a.avgStreak === b.avgStreak
+  );
+
+  const topRank = rankedGrades.length > 0 ? rankedGrades[0].rank : 1;
+  return rankedGrades.map((g) => ({
+    ...g,
+    isChampion: g.rank === topRank && g.percentage > 0,
+  }));
+}
+
+/**
+ * Menghitung Peringkat Kompetisi Standar (Standard Competition Ranking '1224')
+ * Memberikan peringkat sama dan menandai status juara bersama jika skor identik
+ */
+export function assignSharedRanks(list = [], isSameScoreFn) {
+  if (!Array.isArray(list) || list.length === 0) return [];
+
+  const areEqual = isSameScoreFn || ((a, b) => a === b);
+
+  let currentRank = 1;
+  const rankedList = list.map((item, idx) => {
+    if (idx > 0 && !areEqual(item, list[idx - 1])) {
+      currentRank = idx + 1; // Standard competition ranking: 1, 1, 3...
+    }
+    return {
+      ...item,
+      rank: currentRank,
+    };
+  });
+
+  const rankCounts = {};
+  rankedList.forEach((item) => {
+    rankCounts[item.rank] = (rankCounts[item.rank] || 0) + 1;
+  });
+
+  return rankedList.map((item) => {
+    const isShared = (rankCounts[item.rank] || 0) > 1;
+    let medalEmoji = '';
+    let medalColor = '';
+    if (item.rank === 1) {
+      medalEmoji = '🥇';
+      medalColor = 'text-amber-950 bg-amber-400 ring-2 ring-amber-400/40';
+    } else if (item.rank === 2) {
+      medalEmoji = '🥈';
+      medalColor = 'text-white bg-slate-500 ring-2 ring-slate-300';
+    } else if (item.rank === 3) {
+      medalEmoji = '🥉';
+      medalColor = 'text-white bg-amber-800 ring-2 ring-amber-700/40';
+    } else {
+      medalColor = 'text-slate-700 bg-slate-100 border border-slate-200';
+    }
+
+    return {
+      ...item,
+      isShared,
+      rankLabel: isShared ? `#${item.rank} (Bersama)` : `#${item.rank}`,
+      medalEmoji,
+      medalColor,
+    };
+  });
+}
+
+/**
+ * Menyusun Leaderboard Siswa dengan Kriteria Pemutus Seri & Juara Bersama
+ */
+export function sortAndRankStudentsByStreak(students = [], getPeriodStreakFn, getStudentXpFn) {
+  const getStreak = getPeriodStreakFn || ((s) => Number(s.streak_sekarang) || 0);
+  const getXp = getStudentXpFn || ((s) => Number(s.xp) || 0);
+
+  const sorted = [...students].sort((a, b) => {
+    const streakDiff = getStreak(b) - getStreak(a);
+    if (streakDiff !== 0) return streakDiff;
+
+    // Tie-breaker 1: Rekor streak tertinggi sepanjang masa
+    const maxA = Number(a.streak_tertinggi || a.streak_sekarang) || 0;
+    const maxB = Number(b.streak_tertinggi || b.streak_sekarang) || 0;
+    const maxDiff = maxB - maxA;
+    if (maxDiff !== 0) return maxDiff;
+
+    // Tie-breaker 2: Total XP / level siswa
+    const xpDiff = getXp(b) - getXp(a);
+    if (xpDiff !== 0) return xpDiff;
+
+    // Tie-breaker 3: Stabilitas urutan nama
+    return (a.nama || '').localeCompare(b.nama || '');
+  });
+
+  // Karena kategori utama adalah Rekor Streak, jumlah streak yang sama berhak mendapatkan POSISI PERINGKAT YANG SAMA
+  return assignSharedRanks(sorted, (a, b) => {
+    return getStreak(a) === getStreak(b);
+  });
 }

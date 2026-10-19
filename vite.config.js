@@ -8,4 +8,9 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
+
+  build: {
+    reportCompressedSize: false,
+    chunkSizeWarningLimit: 3000,
+  },
 })

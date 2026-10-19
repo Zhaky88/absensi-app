@@ -15,9 +15,11 @@ import {
   Sparkles,
   Users,
   Check,
-  Info
+  Info,
+  ExternalLink,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { useToast } from '../context/ToastModalContext';
 
 export default function StudentAttendancePdfModal({
   isOpen,
@@ -29,6 +31,7 @@ export default function StudentAttendancePdfModal({
   schoolSettings = {},
   holidays = [],
 }) {
+  const { toast } = useToast();
   const [selectedStudent, setSelectedStudent] = useState(initialStudent);
   const [reportType, setReportType] = useState('semesteran'); // 'semesteran' | 'bulanan'
   const today = new Date();
@@ -43,10 +46,10 @@ export default function StudentAttendancePdfModal({
     izin: 0,
     alpa: 0,
     totalHari: 0,
-    percentage: 100,
+    percentage: 0,
   });
 
-  // Opsi Mode Cetak: Single Student vs Batch 1 Rombel
+  // Opsi Mode Cetak: Single Student vs Batch 1 Kelas
   const [printMode, setPrintMode] = useState('single'); // 'single' | 'batch_class'
   const [selectedBatchClassId, setSelectedBatchClassId] = useState('');
   const [batchClassData, setBatchClassData] = useState([]);
@@ -218,7 +221,7 @@ export default function StudentAttendancePdfModal({
 
     records.forEach((r) => {
       const st = (r.status || '').toUpperCase();
-      if (st === 'H' || st === 'T') h++;
+      if (st === 'H') h++;
       else if (st === 'S') s++;
       else if (st === 'I') i++;
       else if (st === 'A') a++;
@@ -226,7 +229,7 @@ export default function StudentAttendancePdfModal({
 
     const totalHari = h + s + i + a;
     const effectiveHadir = h;
-    const percentage = totalHari > 0 ? Math.round((effectiveHadir / totalHari) * 100) : 100;
+    const percentage = totalHari > 0 ? Math.round((effectiveHadir / totalHari) * 100) : 0;
 
     setSummary({
       hadir: h,
@@ -271,13 +274,13 @@ export default function StudentAttendancePdfModal({
         let h = 0, s = 0, i = 0, a = 0;
         recs.forEach((r) => {
           const status = (r.status || '').toUpperCase();
-          if (status === 'H' || status === 'T') h++;
+          if (status === 'H') h++;
           else if (status === 'S') s++;
           else if (status === 'I') i++;
           else if (status === 'A') a++;
         });
         const total = h + s + i + a;
-        const pct = total > 0 ? Math.round((h / total) * 100) : 100;
+        const pct = total > 0 ? Math.round((h / total) * 100) : 0;
 
         return {
           student: st,
@@ -315,8 +318,80 @@ export default function StudentAttendancePdfModal({
     jabatan: effectiveSchoolSettings.kepala_sekolah_jabatan || 'Kepala Sekolah',
   };
 
+  // Sync body class for print isolation
+  useEffect(() => {
+    if (isOpen) {
+      document.body.classList.add('print-modal-open');
+    } else {
+      document.body.classList.remove('print-modal-open');
+    }
+    return () => {
+      document.body.classList.remove('print-modal-open');
+    };
+  }, [isOpen]);
+
   function handlePrint() {
-    window.print();
+    if (printMode === 'single') {
+      if (!selectedStudent) {
+        toast.error('Pilih siswa terlebih dahulu untuk mencetak dokumen rapor presensi.');
+        return;
+      }
+    } else if (printMode === 'batch_class') {
+      if (!selectedBatchClassId) {
+        toast.error('Pilih kelas terlebih dahulu untuk mencetak dokumen massal.');
+        return;
+      }
+      if (batchLoading) {
+        toast.warning('Sedang menyiapkan data rekap kelas, mohon tunggu beberapa detik...');
+        return;
+      }
+      if (!batchClassData || batchClassData.length === 0) {
+        toast.error('Kelas yang dipilih belum memiliki data siswa untuk dicetak.');
+        return;
+      }
+    }
+    setTimeout(() => {
+      window.print();
+    }, 150);
+  }
+
+  function handleOpenNewTab() {
+    if (printMode === 'single') {
+      if (!selectedStudent) {
+        toast.error('Pilih siswa terlebih dahulu untuk mencetak dokumen rapor presensi.');
+        return;
+      }
+    }
+    const printEl = document.getElementById('printable-student-report') || document.getElementById('printArea');
+    if (!printEl) {
+      window.print();
+      return;
+    }
+    const studentTitle = selectedStudent?.nama ? selectedStudent.nama.replace(/[^a-zA-Z0-9]/g, '_') : 'Siswa';
+    const htmlContent = `<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <title>Rapor_Presensi_${studentTitle}</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap');
+    @page { size: A4 portrait; margin: 8mm 10mm; }
+    * { box-sizing: border-box; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+    body { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; margin: 0; padding: 12px; font-size: 10px; color: #000; background: #fff; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 9.5px; }
+    th, td { border: 1px solid #334155; padding: 4px 6px; }
+    th { background: #f1f5f9; text-transform: uppercase; font-size: 8.5px; font-weight: 800; }
+    tr { page-break-inside: avoid; }
+    .no-print { display: none !important; }
+  </style>
+</head>
+<body>
+  ${printEl.innerHTML}
+</body>
+</html>`;
+    const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
   }
 
   function handlePrevStudent() {
@@ -384,7 +459,7 @@ export default function StudentAttendancePdfModal({
               }`}
             >
               <Users className="w-3.5 h-3.5" />
-              <span>1 Rombel Sekaligus</span>
+              <span>1 Kelas Sekaligus</span>
             </button>
           </div>
 
@@ -432,6 +507,15 @@ export default function StudentAttendancePdfModal({
 
           {/* Action Buttons */}
           <button
+            onClick={handleOpenNewTab}
+            className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl flex items-center gap-1.5 border border-slate-300 transition-all cursor-pointer shadow-sm"
+            title="Buka dokumen di tab baru tanpa potongan margin"
+          >
+            <ExternalLink className="w-4 h-4 text-slate-500" />
+            <span>Buka di Tab Baru</span>
+          </button>
+
+          <button
             onClick={handlePrint}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl flex items-center gap-2 shadow-sm transition-all cursor-pointer"
           >
@@ -449,7 +533,7 @@ export default function StudentAttendancePdfModal({
         </div>
       </div>
 
-      {/* Selector Siswa / Rombel */}
+      {/* Selector Siswa / Kelas */}
       <div className="w-full max-w-5xl bg-white/95 backdrop-blur-sm rounded-xl p-3 mb-4 shadow-sm border border-slate-200 flex flex-wrap items-center justify-between gap-3 print:hidden">
         {printMode === 'single' ? (
           <>
@@ -492,7 +576,7 @@ export default function StudentAttendancePdfModal({
         ) : (
           <div className="flex items-center gap-3 w-full">
             <Users className="w-4 h-4 text-blue-600" />
-            <label className="text-xs text-slate-700 font-bold">Pilih Rombel:</label>
+            <label className="text-xs text-slate-700 font-bold">Pilih Kelas:</label>
             <select
               value={selectedBatchClassId}
               onChange={(e) => setSelectedBatchClassId(e.target.value)}
@@ -546,12 +630,12 @@ export default function StudentAttendancePdfModal({
             {batchLoading ? (
               <div className="p-12 text-center text-slate-500">
                 <div className="animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full mx-auto mb-3"></div>
-                <p className="text-sm font-semibold">Menghitung kalender & rekapitulasi rombel...</p>
+                <p className="text-sm font-semibold">Menghitung kalender & rekapitulasi kelas...</p>
               </div>
             ) : batchClassData.length === 0 ? (
               <div className="p-12 text-center text-slate-400">
                 <Users className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                <p className="text-sm">Silakan pilih rombel untuk menampilkan rekap massal.</p>
+                <p className="text-sm">Silakan pilih kelas untuk menampilkan rekap massal.</p>
               </div>
             ) : (
               batchClassData.map((item, idx) => (
@@ -590,7 +674,7 @@ export default function StudentAttendancePdfModal({
         @media print {
           @page {
             size: A4 portrait;
-            margin: 10mm 12mm 10mm 12mm;
+            margin: 6mm 8mm;
           }
           body {
             background: white !important;
@@ -598,9 +682,26 @@ export default function StudentAttendancePdfModal({
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
           }
+          #printable-student-report {
+            zoom: 91% !important;
+            width: 100% !important;
+            max-width: 100% !important;
+          }
           .print\\:break-after-page {
             page-break-after: always !important;
             break-after: page !important;
+          }
+          .print\\:break-after-page:last-child {
+            page-break-after: avoid !important;
+            break-after: avoid !important;
+          }
+          .signature-block, .avoid-break {
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+          }
+          .document-header, .kop-surat {
+            page-break-after: avoid !important;
+            break-after: avoid !important;
           }
         }
       `}</style>
@@ -672,12 +773,12 @@ function StudentReportVisualSheet({
       ];
 
   return (
-    <div className="p-7 sm:p-9 bg-white text-slate-900 min-h-[1050px] flex flex-col justify-between text-xs font-sans">
+    <div className="p-4 sm:p-7 print:p-0 bg-white text-slate-900 min-h-0 print:min-h-0 flex flex-col justify-between text-xs font-sans print:text-[10px] print:leading-snug">
       <div>
         {/* ========================================================= */}
         {/* 1. KOP SURAT RESMI SEKOLAH                                */}
         {/* ========================================================= */}
-        <div className="border-b-[3px] border-slate-900 pb-2 mb-1 flex items-center justify-between text-center gap-3">
+        <div className="border-b-[3px] border-slate-900 pb-2 mb-1 flex items-center justify-between text-center gap-3 document-header kop-surat" style={{ breakAfter: 'avoid', pageBreakAfter: 'avoid' }}>
           {/* Logo Kiri (Logo Sekolah yang Diupload / Default Tut Wuri) */}
           <div className="w-16 h-16 flex-shrink-0 flex items-center justify-center overflow-hidden">
             {schoolSettings?.sekolah_logo ? (
@@ -758,7 +859,7 @@ function StudentReportVisualSheet({
               <span className="font-mono font-bold text-slate-800">{student?.nis || '-'}</span>
             </div>
             <div className="flex items-center">
-              <span className="w-24 text-slate-500">Kelas / Rombel</span>
+              <span className="w-24 text-slate-500">Kelas</span>
               <span className="w-2 text-slate-400">:</span>
               <span className="font-bold text-slate-900">{currentClass?.nama_kelas || student?.kelas?.nama_kelas || '-'}</span>
             </div>
@@ -997,7 +1098,7 @@ function StudentReportVisualSheet({
       {/* ========================================================= */}
       {/* 7. BLOK LEGALISASI & TANDA TANGAN RESMI                    */}
       {/* ========================================================= */}
-      <div className="text-[11px] pt-1">
+      <div className="text-[11px] pt-1 signature-block break-inside-avoid">
         <div className="text-right text-slate-600 mb-2 text-[10px]">
           Kota Bangun, {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}
         </div>
@@ -1120,7 +1221,7 @@ function MiniMonthCalendar({ monthName, monthIndex, year, attMap = {}, holidays 
 
           let bgClass = 'bg-slate-50 text-slate-600 hover:bg-slate-100';
 
-          if (cell.status === 'H' || cell.status === 'T') {
+          if (cell.status === 'H') {
             bgClass = 'bg-emerald-500 text-white font-bold';
           } else if (cell.status === 'S') {
             bgClass = 'bg-blue-500 text-white font-bold ring-1 ring-blue-300';
@@ -1136,7 +1237,7 @@ function MiniMonthCalendar({ monthName, monthIndex, year, attMap = {}, holidays 
             <div
               key={idx}
               className={`h-4 w-full flex items-center justify-center rounded text-[8px] transition-colors leading-none ${bgClass}`}
-              title={`${cell.dateStr}: ${cell.status === 'H' || cell.status === 'T' ? 'Hadir' : cell.status === 'S' ? 'Sakit' : cell.status === 'I' ? 'Izin' : cell.status === 'A' ? 'Alpa' : cell.isSunday ? 'Ahad' : 'Hari Sekolah'}`}
+              title={`${cell.dateStr}: ${cell.status === 'H' ? 'Hadir' : cell.status === 'S' ? 'Sakit' : cell.status === 'I' ? 'Izin' : cell.status === 'A' ? 'Alpa' : cell.isSunday ? 'Ahad' : 'Hari Sekolah'}`}
             >
               {cell.day}
             </div>
@@ -1195,7 +1296,7 @@ function LargeMonthCalendar({ monthName, monthIndex, year, attMap = {}, holidays
           let bg = 'bg-slate-50 text-slate-700 border-slate-200';
           let badgeText = '';
 
-          if (cell.status === 'H' || cell.status === 'T') {
+          if (cell.status === 'H') {
             bg = 'bg-emerald-50 text-emerald-900 border-emerald-300';
             badgeText = 'HADIR';
           } else if (cell.status === 'S') {

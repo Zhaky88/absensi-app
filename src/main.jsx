@@ -4,13 +4,16 @@ import './index.css'
 import App from './App.jsx'
 import { AuthProvider } from './context/AuthContext.jsx'
 import { ToastModalProvider } from './context/ToastModalContext.jsx'
+import ErrorBoundary from './components/ErrorBoundary.jsx'
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <AuthProvider>
-      <ToastModalProvider>
-        <App />
-      </ToastModalProvider>
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <ToastModalProvider>
+          <App />
+        </ToastModalProvider>
+      </AuthProvider>
+    </ErrorBoundary>
   </StrictMode>,
 )

@@ -29,30 +29,231 @@
   scrollbar-width: none;
 }
 
+/* Responsive Touch Scrolling for Tables on Mobile */
+.overflow-x-auto {
+  -webkit-overflow-scrolling: touch !important;
+  touch-action: pan-x pan-y !important;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+.overflow-x-auto::-webkit-scrollbar {
+  height: 6px;
+}
+
+.overflow-x-auto::-webkit-scrollbar-track {
+  background: rgba(241, 245, 249, 0.7);
+  border-radius: 9999px;
+}
+
+.overflow-x-auto::-webkit-scrollbar-thumb {
+  background-color: #cbd5e1;
+  border-radius: 9999px;
+}
+
+.overflow-x-auto::-webkit-scrollbar-thumb:hover {
+  background-color: #94a3b8;
+}
+
 @media print {
+  /* 1. Page Canvas & Margin Defaults */
+  @page {
+    margin: 8mm 10mm;
+    size: auto;
+  }
+
+  /* 2. Global Document Reset */
+  html,
+  body {
+    margin: 0 !important;
+    padding: 0 !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* 3. Hide all general UI chrome, headers, navigation bars, sidebars, modals overlay buttons */
+  nav,
+  aside,
+  header:not(.print-header),
+  footer:not(.print-footer),
+  .no-print,
+  [data-no-print="true"] {
+    display: none !important;
+  }
+
+  /* 4. Hide all elements by default */
   body * {
     visibility: hidden;
   }
+
+  /* 5. Make all legitimate printable areas and their subtrees visible */
   #printArea,
   #printArea *,
   .printable-area,
   .printable-area *,
   #printable-student-report,
-  #printable-student-report * {
+  #printable-student-report *,
+  .printable-id-card,
+  .printable-id-card *,
+  .printable-certificate,
+  .printable-certificate *,
+  .printable-summons,
+  .printable-summons *,
+  #printScheduleArea,
+  #printScheduleArea *,
+  #printActivityLogArea,
+  #printActivityLogArea * {
     visibility: visible;
   }
+
+  /* 6. Standard A4 Document Containers */
   #printArea,
-  .printable-area,
-  #printable-student-report {
+  .printable-area:not(#printScheduleArea),
+  #printable-student-report,
+  #printable-certificate,
+  #printable-summons,
+  #printActivityLogArea {
+    position: relative !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+
+  #printScheduleArea {
     position: absolute !important;
     left: 0 !important;
     top: 0 !important;
     width: 100% !important;
+    max-width: 100% !important;
     margin: 0 !important;
     padding: 0 !important;
+    background: #ffffff !important;
+    box-shadow: none !important;
+    border: none !important;
   }
-  .no-print,
-  [data-no-print="true"] {
+
+  /* 7. Physical Student ID Card Styling (CR80 Wallet Standard) */
+  .printable-id-card {
+    position: relative !important;
+    margin: 20mm auto !important;
+    width: 85.6mm !important;
+    max-width: 85.6mm !important;
+    box-shadow: none !important;
+    border: 1.5px solid #0f172a !important;
+    border-radius: 12px !important;
+    overflow: hidden !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+  }
+
+  /* 8. Anti-Clipping: Expand scroll & overflow wrappers so nothing is cut off */
+  .overflow-hidden,
+  .overflow-x-auto,
+  .overflow-y-auto,
+  div[style*="overflow"] {
+    overflow: visible !important;
+  }
+
+  /* 9. Remove fixed max-width constraints on print */
+  .max-w-md,
+  .max-w-lg,
+  .max-w-xl,
+  .max-w-2xl,
+  .max-w-3xl,
+  .max-w-4xl,
+  .max-w-5xl,
+  .max-w-6xl {
+    max-width: 100% !important;
+    width: 100% !important;
+  }
+
+  /* 10. Table auto-fit and word-wrap to prevent table columns from cutting off on the right */
+  table {
+    width: 100% !important;
+    max-width: 100% !important;
+    table-layout: auto !important;
+  }
+
+  th,
+  td {
+    word-break: break-word !important;
+    overflow-wrap: break-word !important;
+  }
+
+  /* 11. Scale containers slightly so they comfortably fit within any printer's printable margin */
+  #printable-student-report,
+  .printable-summons,
+  #printScheduleArea {
+    zoom: 91% !important;
+  }
+
+  .printable-certificate,
+  #printArea:not(.printable-id-card) {
+    zoom: 90% !important;
+  }
+
+  /* 12. Collapse dashboard background content when print-modal-open is active on body */
+  body.print-modal-open > #root > div.min-h-screen > aside,
+  body.print-modal-open > #root > div.min-h-screen > div > header,
+  body.print-modal-open > #root > div.min-h-screen > div > main > div:not(.print-modal-container):not(.fixed):not([role="dialog"]) {
     display: none !important;
+  }
+
+  /* 13. Page Break Rules: Prevent breaking inside rows, signatures, and cards */
+  tr,
+  th,
+  td,
+  .signature-block,
+  .break-inside-avoid,
+  .avoid-break {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  /* 14. Document Headers must NEVER be separated from the table/content below them */
+  .document-header,
+  .print-header,
+  .kop-surat,
+  .header-surat,
+  [data-print-header="true"] {
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+  }
+
+  /* 15. Allow table to flow naturally across pages with repeating headers on subsequent pages */
+  table {
+    page-break-inside: auto !important;
+    break-inside: auto !important;
+  }
+
+  thead {
+    display: table-header-group !important;
+  }
+
+  tfoot {
+    display: table-footer-group !important;
+  }
+
+  /* 16. Avoid trailing blank pages */
+  *:last-child {
+    page-break-after: avoid !important;
+    break-after: avoid !important;
   }
 }

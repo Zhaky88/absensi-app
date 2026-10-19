@@ -5,7 +5,7 @@ import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Info, Flame, Alert
  * AttendanceCalendar Component
  * Komponen Kalender Interaktif yang menampilkan:
  * 1. Tanggal Kalender Bulanan
- * 2. Status Kehadiran Murid (Dot Indicator: Hijau=Hadir, Kuning=Terlambat, Biru=Izin/Sakit, Merah=Alpa)
+ * 2. Status Kehadiran Murid (Dot Indicator: Hijau=Hadir, Biru=Izin/Sakit, Merah=Alpa)
  * 3. Hari Libur Sekolah / Nasional (Badge Merah Muda / Abu-abu dengan Keterangan Libur)
  * 4. Popup Detail riwayat kehadiran saat tanggal diklik
  */
@@ -77,7 +77,7 @@ export default function AttendanceCalendar({ attendanceRecords = [], holidays = 
     } else if (isWeekend) {
       badgeText = 'Ahad';
     } else if (att) {
-      if (att.status === 'H' || att.status === 'T') dotColor = 'bg-emerald-500';
+      if (att.status === 'H') dotColor = 'bg-emerald-500';
       else if (att.status === 'I') dotColor = 'bg-sky-500';
       else if (att.status === 'S') dotColor = 'bg-indigo-500';
       else if (att.status === 'A') dotColor = 'bg-rose-500';
@@ -225,7 +225,7 @@ export default function AttendanceCalendar({ attendanceRecords = [], holidays = 
           ) : selectedDayDetail.att ? (
             <div className="p-3 bg-white rounded-xl border border-blue-200 space-y-1">
               <span className="font-bold text-slate-800 block">
-                Status: {selectedDayDetail.att.status === 'H' || selectedDayDetail.att.status === 'T' ? '✅ Hadir' : selectedDayDetail.att.status === 'I' ? 'ℹ️ Izin' : selectedDayDetail.att.status === 'S' ? '💊 Sakit' : '❌ Alpa'}
+                Status: {selectedDayDetail.att.status === 'H' ? '✅ Hadir' : selectedDayDetail.att.status === 'I' ? 'ℹ️ Izin' : selectedDayDetail.att.status === 'S' ? '💊 Sakit' : '❌ Alpa'}
               </span>
               <p className="text-[11px] text-slate-600">Waktu Scan: {selectedDayDetail.att.waktu || '07:15'}</p>
               <p className="text-[11px] text-slate-500">Mapel: {selectedDayDetail.att.jadwal?.mata_pelajaran?.nama_mapel || 'Presensi Pembelajaran'}</p>

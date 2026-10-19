@@ -53,7 +53,15 @@ import confetti from 'canvas-confetti';
 import CameraQrScanner from '../components/CameraQrScanner';
 import AttendanceCalendar from '../components/AttendanceCalendar';
 import StudentAttendancePdfModal from '../components/StudentAttendancePdfModal';
-import { getCustomMissions, evaluateCustomMissionForStudent } from '../lib/achievementManager';
+import {
+  calculateStudentLevel,
+  getCustomMissions,
+  evaluateCustomMissionForStudent,
+  calculateClassDisciplineLeaderboard,
+  calculateGradeDisciplineComparison,
+  sortAndRankStudentsByStreak,
+  assignSharedRanks,
+} from '../lib/achievementManager';
 
 export default function MuridDashboard() {
   const { userProfile, logout, setUserProfile } = useAuth();
@@ -77,7 +85,27 @@ export default function MuridDashboard() {
 
   // Sidebar & Navigation State
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState('qr_siswa'); // 'qr_siswa' | 'scan' | 'hari_ini' | 'jadwal' | 'tugas' | 'izin' | 'riwayat' | 'achievements' | 'leaderboard' | 'profil'
+  const [activeTab, setActiveTab] = useState(() => {
+    try {
+      const hash = window.location.hash;
+      if (hash && hash.startsWith('#tab=')) {
+        const tabFromHash = decodeURIComponent(hash.replace('#tab=', ''));
+        if (tabFromHash) return tabFromHash;
+      }
+      return localStorage.getItem('siak_active_tab_murid') || 'qr_siswa';
+    } catch (e) {
+      return 'qr_siswa';
+    }
+  });
+
+  useEffect(() => {
+    if (activeTab) {
+      try {
+        localStorage.setItem('siak_active_tab_murid', activeTab);
+        window.history.replaceState(null, '', `#tab=${encodeURIComponent(activeTab)}`);
+      } catch (e) {}
+    }
+  }, [activeTab]);
 
   // Identitas & Pengaturan Sekolah (Tersinkronisasi dengan Admin Dashboard)
   const [settings, setSettings] = useState(() => {
@@ -190,6 +218,11 @@ export default function MuridDashboard() {
   const [attendanceHistory, setAttendanceHistory] = useState([]);
   const [holidays, setHolidays] = useState([]);
   const [leaderboard, setLeaderboard] = useState([]);
+  const [allStudentsLeaderboard, setAllStudentsLeaderboard] = useState([]);
+  const [classesList, setClassesList] = useState([]);
+  const [leaderboardCategory, setLeaderboardCategory] = useState('streak'); // 'streak' | 'kelas' | 'tingkat'
+  const [leaderboardScope, setLeaderboardScope] = useState('class'); // 'class' | 'school'
+  const [leaderboardPeriod, setLeaderboardPeriod] = useState('month'); // 'week' | 'month' | 'semester'
   const [kbmTasks, setKbmTasks] = useState([]);
   const [completedTaskIds, setCompletedTaskIds] = useState(() => {
     try {
@@ -284,25 +317,24 @@ export default function MuridDashboard() {
 
     // Kumpulan tanggal hadir unik
     const presentDates = new Set(
-      attendanceHistory.filter((a) => a.status === 'H' || a.status === 'T').map((a) => a.tanggal)
+      attendanceHistory.filter((a) => a.status === 'H').map((a) => a.tanggal)
     );
     const totalPresentDays = presentDates.size;
 
-    // Cek kehadiran pagi hari (<= 07:15)
-    const earlyAttendances = attendanceHistory.filter(
-      (a) => a.waktu && a.waktu <= '07:15' && (a.status === 'H' || a.status === 'T')
-    );
-    const earlyCount = earlyAttendances.length;
-
-    // Cek keterlambatan (status 'T')
-    const lateRecords = attendanceHistory.filter((a) => a.status === 'T');
-    const isZeroLateMonth = attendanceHistory.length >= 6 && lateRecords.length === 0;
+    // Karena absensi dilakukan bersama di kelas, indikator kedisiplinan berfokus pada kehadiran aktif & nihil alpa
+    const alpaRecords = attendanceHistory.filter((a) => a.status === 'A');
+    const isZeroAlpaMonth = attendanceHistory.length >= 6 && alpaRecords.length === 0;
 
     // Cek sesi KBM hari ini
     const todaySessionsCount = todayAttendanceList.length;
 
-    // Cek ranking di leaderboard
-    const myRank = leaderboard.findIndex((item) => String(item.nis) === String(siswa?.nis)) + 1;
+    // Cek ranking di leaderboard dengan standar posisi seri adil (juara bersama)
+    const rankedClassLeaderboard = sortAndRankStudentsByStreak(
+      leaderboard.length > 0 ? leaderboard : (allStudentsLeaderboard.length > 0 ? allStudentsLeaderboard : (siswa ? [siswa] : [])),
+      (s) => Number(s.streak_sekarang) || 0
+    );
+    const myRankItem = rankedClassLeaderboard.find((item) => String(item.nis) === String(siswa?.nis));
+    const myRank = myRankItem?.rank || 1;
 
     // Cek kehadiran bulan Desember
     const decemberRecords = attendanceHistory.filter((a) => a.tanggal && a.tanggal.includes('-12-'));
@@ -408,7 +440,7 @@ export default function MuridDashboard() {
         periodScope: 'all_time',
         categoryLabel: 'Misi Kelas 8 (Konsistensi)',
         title: 'Panutan Adik Kelas 8',
-        description: 'Menjadi teladan dengan 0 menit keterlambatan (Zero Late) selama 1 bulan penuh di kelas 8.',
+        description: 'Menjadi teladan dengan kehadiran penuh tanpa alpa selama 1 bulan penuh di kelas 8.',
         tier: 'silver',
         icon: '🛡️',
         xp: 350,
@@ -711,34 +743,34 @@ export default function MuridDashboard() {
         category: 'punctuality',
         gradeScope: 'all',
         periodScope: 'all_time',
-        categoryLabel: 'Ketepatan Waktu',
-        title: 'Fajar Pertama',
-        description: 'Melakukan scan presensi minimal 15 menit sebelum bel sekolah berbunyi (sebelum 07:15).',
+        categoryLabel: 'Kedisiplinan Kelas',
+        title: 'Disiplin Kelas',
+        description: 'Hadir aktif dan tertib mengikuti sesi absensi bersama di kelas.',
         tier: 'bronze',
-        icon: '🌅',
+        icon: '🏫',
         xp: 100,
-        currentProgress: earlyCount > 0 ? 1 : 0,
+        currentProgress: totalPresentDays > 0 ? 1 : 0,
         maxProgress: 1,
-        unit: 'Kali',
-        isUnlocked: earlyCount > 0,
-        unlockedDate: earlyCount > 0 ? 'Tercapai' : null,
+        unit: 'Sesi',
+        isUnlocked: totalPresentDays > 0,
+        unlockedDate: totalPresentDays > 0 ? 'Tercapai' : null,
       },
       {
         id: 'zero_tardiness',
         category: 'punctuality',
         gradeScope: 'all',
         periodScope: 'all_time',
-        categoryLabel: 'Ketepatan Waktu',
-        title: 'Nol Keterlambatan',
-        description: 'Hadir tepat waktu selama sebulan kalender penuh tanpa terlambat 1 menit pun.',
+        categoryLabel: 'Kedisiplinan Kelas',
+        title: 'Kehadiran Sempurna (Nihil Alpa)',
+        description: 'Hadir aktif mengikuti KBM di kelas secara konsisten tanpa ada catatan alpa.',
         tier: 'silver',
-        icon: '⏱️',
+        icon: '✨',
         xp: 250,
-        currentProgress: isZeroLateMonth ? 1 : Math.max(0, 1 - lateRecords.length),
+        currentProgress: isZeroAlpaMonth ? 1 : Math.max(0, 1 - alpaRecords.length),
         maxProgress: 1,
         unit: 'Bulan',
-        isUnlocked: isZeroLateMonth,
-        unlockedDate: isZeroLateMonth ? 'Bulan Ini' : null,
+        isUnlocked: isZeroAlpaMonth,
+        unlockedDate: isZeroAlpaMonth ? 'Bulan Ini' : null,
       },
 
       // =========================================================
@@ -915,51 +947,46 @@ export default function MuridDashboard() {
     diamond: unlockedAchievements.filter((a) => a.tier === 'diamond').length,
   };
 
+  // Hitung jumlah misi per kategori secara dinamis
+  const categoryCounts = React.useMemo(() => {
+    const counts = { all: achievementsList.length };
+    achievementsList.forEach((a) => {
+      const cat = a.category || 'other';
+      counts[cat] = (counts[cat] || 0) + 1;
+    });
+    return counts;
+  }, [achievementsList]);
+
   // Filter List Badges Sesuai Tab Filter Kategori, Jenjang Kelas, Periode, & Status Temporal
   const filteredAchievements = achievementsList.filter((a) => {
     // 1. Filter Kategori
-    let matchCat = true;
-    if (achievementCategoryFilter === 'grade') {
-      matchCat = a.category === 'grade';
-    } else if (achievementCategoryFilter === 'seasonal') {
-      matchCat = a.category === 'seasonal';
-    } else if (achievementCategoryFilter === 'streak') {
-      matchCat = a.category === 'streak';
-    } else if (achievementCategoryFilter === 'punctuality') {
-      matchCat = a.category === 'punctuality';
-    } else if (achievementCategoryFilter === 'stamina') {
-      matchCat = a.category === 'stamina';
-    } else if (achievementCategoryFilter === 'leaderboard') {
-      matchCat = a.category === 'leaderboard';
+    if (achievementCategoryFilter !== 'all' && a.category !== achievementCategoryFilter) {
+      return false;
     }
 
     // 2. Filter Jenjang Kelas (Semua / Kelas 7 / Kelas 8 / Kelas 9)
-    const matchGrade =
-      achievementGradeFilter === 'all' ||
-      a.gradeScope === achievementGradeFilter ||
-      a.gradeScope === 'all';
-
-    // 3. Filter Periode Semester
-    const matchPeriod =
-      achievementPeriodFilter === 'all' ||
-      a.periodScope === achievementPeriodFilter ||
-      a.periodScope === 'all_time';
-
-    // 4. Filter Status: 'all' | 'unlocked' | 'active' | 'upcoming' | 'missed' | 'locked'
-    let matchStatus = true;
-    if (achievementStatusFilter === 'unlocked') {
-      matchStatus = a.isUnlocked;
-    } else if (achievementStatusFilter === 'active') {
-      matchStatus = a.missionStatus === 'active';
-    } else if (achievementStatusFilter === 'upcoming') {
-      matchStatus = a.missionStatus === 'upcoming';
-    } else if (achievementStatusFilter === 'missed') {
-      matchStatus = a.missionStatus === 'missed';
-    } else if (achievementStatusFilter === 'locked') {
-      matchStatus = !a.isUnlocked;
+    if (achievementGradeFilter !== 'all') {
+      const gMatch = String(a.gradeScope) === String(achievementGradeFilter) || a.gradeScope === 'all';
+      if (!gMatch) return false;
     }
 
-    return matchCat && matchGrade && matchPeriod && matchStatus;
+    // 3. Filter Periode Semester
+    if (achievementPeriodFilter !== 'all') {
+      const pMatch =
+        a.periodScope === achievementPeriodFilter ||
+        a.periodScope === 'all_time' ||
+        a.periodScope === 'all';
+      if (!pMatch) return false;
+    }
+
+    // 4. Filter Status: 'all' | 'unlocked' | 'active' | 'upcoming' | 'missed' | 'locked'
+    if (achievementStatusFilter === 'unlocked' && !a.isUnlocked) return false;
+    if (achievementStatusFilter === 'active' && a.missionStatus !== 'active') return false;
+    if (achievementStatusFilter === 'upcoming' && a.missionStatus !== 'upcoming') return false;
+    if (achievementStatusFilter === 'missed' && a.missionStatus !== 'missed') return false;
+    if (achievementStatusFilter === 'locked' && a.isUnlocked) return false;
+
+    return true;
   });
 
   // Waktu real-time
@@ -1019,15 +1046,122 @@ export default function MuridDashboard() {
     }
   }, [activeTab]);
 
-  // Sinkronisasi data saat siswa aktif tersedia
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [lastSyncTime, setLastSyncTime] = useState(() => new Date());
+
+  // Master Sinkronisasi Seluruh Data Siswa dengan Database Supabase & Sistem Sekolah
+  async function syncAllStudentData(silent = false) {
+    if (!siswa?.nis) return;
+    try {
+      if (!silent) setIsSyncing(true);
+
+      // 1. Sinkronkan profil siswa (streak, xp, kelas, wali kelas) langsung dari tabel siswa Supabase
+      const { data: latestStudent } = await supabase
+        .from('siswa')
+        .select('*, kelas(*, guru(nama, nip))')
+        .eq('nis', siswa.nis)
+        .maybeSingle();
+
+      if (latestStudent && setUserProfile) {
+        setUserProfile((prev) => {
+          if (!prev) return prev;
+          const merged = {
+            ...prev,
+            details: {
+              ...prev.details,
+              ...latestStudent,
+              kelas: latestStudent.kelas || prev.details?.kelas,
+            },
+          };
+          try {
+            localStorage.setItem('siak_active_user_profile', JSON.stringify(merged));
+          } catch (e) {}
+          return merged;
+        });
+      }
+
+      // 2. Sinkronkan data jadwal, absensi hari ini, riwayat presensi, leaderboard, libur, tugas KBM & pengaturan
+      await Promise.allSettled([
+        fetchSchedules(),
+        fetchTodayAttendance(),
+        fetchHistory(),
+        fetchLeaderboard(),
+        fetchHolidays(),
+        fetchKbmTasks(),
+        fetchSchoolSettings(),
+      ]);
+
+      setLastSyncTime(new Date());
+      if (!silent) {
+        toast.success(
+          'Seluruh data kehadiran, jadwal KBM, dan leaderboard berhasil disinkronkan dengan server sekolah.',
+          'Data Tersinkronisasi'
+        );
+      }
+    } catch (err) {
+      console.warn('Sync error notice:', err);
+      if (!silent) {
+        toast.info('Data telah diperbarui menggunakan cache lokal sistem.');
+      }
+    } finally {
+      if (!silent) setIsSyncing(false);
+    }
+  }
+
+  // Sinkronisasi otomatis saat komponen dimuat atau NIS siswa tersedia
   useEffect(() => {
     if (siswa?.nis) {
-      fetchSchedules();
-      fetchTodayAttendance();
-      fetchHistory();
-      fetchLeaderboard();
-      fetchHolidays();
-      fetchKbmTasks();
+      syncAllStudentData(true);
+    }
+  }, [siswa?.nis]);
+
+  // Sinkronisasi otomatis saat tab/jendela kembali aktif (misal siswa kembali membuka browser/hp)
+  useEffect(() => {
+    const handleReactivation = () => {
+      if (document.visibilityState === 'visible' && siswa?.nis) {
+        syncAllStudentData(true);
+      }
+    };
+    window.addEventListener('visibilitychange', handleReactivation);
+    window.addEventListener('focus', handleReactivation);
+    return () => {
+      window.removeEventListener('visibilitychange', handleReactivation);
+      window.removeEventListener('focus', handleReactivation);
+    };
+  }, [siswa?.nis]);
+
+  // Periodic Auto-Sync setiap 30 detik untuk memastikan data presensi dari guru selalu real-time
+  useEffect(() => {
+    const syncInterval = setInterval(() => {
+      if (document.visibilityState === 'visible' && siswa?.nis) {
+        syncAllStudentData(true);
+      }
+    }, 30000);
+    return () => clearInterval(syncInterval);
+  }, [siswa?.nis]);
+
+  // Supabase Realtime Channel: Dengarkan perubahan tabel absensi, siswa, dan jadwal secara real-time
+  useEffect(() => {
+    if (!siswa?.nis) return;
+    try {
+      const channel = supabase
+        .channel(`rt_murid_${siswa.nis}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'absensi', filter: `nis=eq.${siswa.nis}` }, () => {
+          syncAllStudentData(true);
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'siswa', filter: `nis=eq.${siswa.nis}` }, () => {
+          syncAllStudentData(true);
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'jadwal' }, () => {
+          fetchSchedules();
+        })
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(channel);
+      };
+    } catch (e) {
+      console.warn('Realtime channel subscription skipped:', e);
     }
   }, [siswa?.nis]);
 
@@ -1253,7 +1387,7 @@ export default function MuridDashboard() {
         setAttendanceHistory([
           { id_absensi: '1', tanggal: `${yr}-${mo}-17`, waktu: '07:12', status: 'H', metode: 'Dynamic QR', jadwal: { mata_pelajaran: { nama_mapel: 'Informatika' } } },
           { id_absensi: '2', tanggal: `${yr}-${mo}-16`, waktu: '07:15', status: 'H', metode: 'Dynamic QR', jadwal: { mata_pelajaran: { nama_mapel: 'Matematika' } } },
-          { id_absensi: '3', tanggal: `${yr}-${mo}-15`, waktu: '07:42', status: 'T', metode: 'Dynamic QR', keterangan: 'Terlambat 12 menit', jadwal: { mata_pelajaran: { nama_mapel: 'B. Indonesia' } } },
+          { id_absensi: '3', tanggal: `${yr}-${mo}-15`, waktu: '07:15', status: 'H', metode: 'Dynamic QR', keterangan: 'Hadir', jadwal: { mata_pelajaran: { nama_mapel: 'B. Indonesia' } } },
           { id_absensi: '4', tanggal: `${yr}-${mo}-14`, waktu: '07:05', status: 'H', metode: 'Dynamic QR', jadwal: { mata_pelajaran: { nama_mapel: 'IPA Terpadu' } } },
           { id_absensi: '5', tanggal: `${yr}-${mo}-13`, waktu: '07:18', status: 'H', metode: 'Dynamic QR', jadwal: { mata_pelajaran: { nama_mapel: 'Bahasa Inggris' } } },
           { id_absensi: '6', tanggal: `${yr}-${mo}-10`, waktu: '07:10', status: 'H', metode: 'Dynamic QR', jadwal: { mata_pelajaran: { nama_mapel: 'Pendidikan Agama' } } },
@@ -1280,26 +1414,60 @@ export default function MuridDashboard() {
     } catch (e) {}
   }
 
-  // Load Leaderboard
+  // Load Leaderboard & Data Kelas
   async function fetchLeaderboard() {
     try {
-      const { data } = await supabase
+      const { data: studentsData } = await supabase
         .from('siswa')
-        .select('nis, nama, streak_sekarang, streak_tertinggi, kelas(nama_kelas)')
-        .order('streak_sekarang', { ascending: false })
-        .limit(10);
-      if (data && data.length > 0) {
-        setLeaderboard(data);
+        .select('nis, nama, foto_wajah, streak_sekarang, streak_tertinggi, xp, total_hadir, id_kelas, kelas(id_kelas, nama_kelas, tingkat)')
+        .order('streak_sekarang', { ascending: false });
+
+      const { data: classesData } = await supabase
+        .from('kelas')
+        .select('id_kelas, nama_kelas, tingkat, wali_kelas, guru(nama)')
+        .order('nama_kelas', { ascending: true });
+
+      if (studentsData && studentsData.length > 0) {
+        setAllStudentsLeaderboard(studentsData);
+        // Filter default untuk kelas murid yang login secara fleksibel
+        if (siswa) {
+          const sClassId = String(siswa.id_kelas || siswa.kelas?.id_kelas || '');
+          const sClassName = String(siswa.kelas?.nama_kelas || '').trim().toUpperCase();
+          const classOnly = studentsData.filter((s) => {
+            const scId = String(s.id_kelas || s.kelas?.id_kelas || '');
+            const scName = String(s.kelas?.nama_kelas || '').trim().toUpperCase();
+            if (sClassId && scId && sClassId === scId) return true;
+            if (sClassName && scName && sClassName === scName) return true;
+            return false;
+          });
+          setLeaderboard(classOnly.length > 0 ? classOnly : studentsData);
+        } else {
+          setLeaderboard(studentsData);
+        }
       } else {
-        setLeaderboard([
-          { nis: '202409001', nama: siswa?.nama || 'Budi Pratama', streak_sekarang: 18, kelas: { nama_kelas: 'VII-A' } },
-          { nis: '202409002', nama: 'Siti Rahmawati', streak_sekarang: 15, kelas: { nama_kelas: 'VII-A' } },
-          { nis: '202409003', nama: 'Rian Hidayat', streak_sekarang: 12, kelas: { nama_kelas: 'VII-B' } },
-          { nis: '202409004', nama: 'Dewi Anggraini', streak_sekarang: 10, kelas: { nama_kelas: 'VII-A' } },
-          { nis: '202409005', nama: 'Fajar Nugroho', streak_sekarang: 8, kelas: { nama_kelas: 'VII-C' } },
+        const defaultStudents = [
+          { nis: siswa?.nis || '202409001', nama: siswa?.nama || 'Budi Pratama', streak_sekarang: siswa?.streak_sekarang || 14, streak_tertinggi: 18, id_kelas: 'c1', kelas: { id_kelas: 'c1', nama_kelas: siswa?.kelas?.nama_kelas || 'VII-A', tingkat: 7 } },
+          { nis: '202409002', nama: 'Siti Rahmawati', streak_sekarang: 15, streak_tertinggi: 15, id_kelas: 'c1', kelas: { id_kelas: 'c1', nama_kelas: 'VII-A', tingkat: 7 } },
+          { nis: '202409003', nama: 'Rian Hidayat', streak_sekarang: 12, streak_tertinggi: 16, id_kelas: 'c2', kelas: { id_kelas: 'c2', nama_kelas: 'VIII-A', tingkat: 8 } },
+          { nis: '202409004', nama: 'Dewi Anggraini', streak_sekarang: 10, streak_tertinggi: 14, id_kelas: 'c1', kelas: { id_kelas: 'c1', nama_kelas: 'VII-A', tingkat: 7 } },
+          { nis: '202409005', nama: 'Fajar Nugroho', streak_sekarang: 8, streak_tertinggi: 12, id_kelas: 'c3', kelas: { id_kelas: 'c3', nama_kelas: 'IX-A', tingkat: 9 } },
+        ];
+        setAllStudentsLeaderboard(defaultStudents);
+        setLeaderboard(defaultStudents);
+      }
+
+      if (classesData && classesData.length > 0) {
+        setClassesList(classesData);
+      } else {
+        setClassesList([
+          { id_kelas: 'c1', nama_kelas: 'VII-A', tingkat: 7, guru: { nama: 'Bpk. Ahmad Fauzi, S.Pd' } },
+          { id_kelas: 'c2', nama_kelas: 'VIII-A', tingkat: 8, guru: { nama: 'Ibu Ratna Dewi, M.Pd' } },
+          { id_kelas: 'c3', nama_kelas: 'IX-A', tingkat: 9, guru: { nama: 'Bpk. Hendra Wijaya, M.Kom' } },
         ]);
       }
-    } catch (e) {}
+    } catch (e) {
+      console.warn('fetchLeaderboard error:', e);
+    }
   }
 
   // Load Catatan Jurnal KBM Guru (Tugas & Materi)
@@ -1405,16 +1573,9 @@ export default function MuridDashboard() {
         return;
       }
 
-      // Hitung apakah terlambat
-      let statusPresensi = 'H';
-      let keterangan = `Scan Mandiri Murid (Token: ${String(token).slice(0, 8)}...)`;
-
-      if (currentLiveKbm && currentLiveKbm.batas_waktu_terlambat) {
-        if (nowTimeStr > currentLiveKbm.batas_waktu_terlambat) {
-          statusPresensi = 'T';
-          keterangan = `Terlambat hadir (Toleransi: ${currentLiveKbm.batas_waktu_terlambat})`;
-        }
-      }
+      // Catat presensi hadir siswa
+      const statusPresensi = 'H';
+      const keterangan = `Scan Mandiri Murid (Token: ${String(token).slice(0, 8)}...)`;
 
       const insertPayload = {
         nis: siswa?.nis || '202409001',
@@ -1435,19 +1596,12 @@ export default function MuridDashboard() {
       confetti({ particleCount: 90, spread: 70, origin: { y: 0.6 } });
       setScanResult({
         success: true,
-        message:
-          statusPresensi === 'T'
-            ? 'Presensi Berhasil Dicatat (Status: Terlambat). Tetap semangat belajar!'
-            : 'Presensi Berhasil Dicatat (Status: Hadir Tepat Waktu)! Streak Anda bertambah.',
+        message: 'Presensi Berhasil Dicatat (Status: Hadir)! Streak Anda bertambah.',
       });
 
-      toast.success(
-        statusPresensi === 'T' ? 'Presensi Terlambat Dicatat' : 'Presensi Hadir Berhasil!',
-        'Presensi Berhasil'
-      );
+      toast.success('Presensi Hadir Berhasil!', 'Presensi Berhasil');
 
-      fetchTodayAttendance();
-      fetchHistory();
+      syncAllStudentData(true);
     } catch (err) {
       console.warn('Fallback submit attendance:', err);
       confetti({ particleCount: 60, spread: 60 });
@@ -1456,8 +1610,7 @@ export default function MuridDashboard() {
         message: 'Presensi Berhasil Dicatat (Tersimpan di sistem sekolah).',
       });
       toast.success('Presensi Hadir Berhasil!');
-      fetchTodayAttendance();
-      fetchHistory();
+      syncAllStudentData(true);
     }
   }
 
@@ -1845,30 +1998,42 @@ export default function MuridDashboard() {
       <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
         {/* Top Header Bar */}
         <header className="sticky top-0 z-30 bg-white/80 backdrop-blur-md border-b border-slate-200/80 px-4 sm:px-8 py-3.5 flex items-center justify-between">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1 pr-2">
             <button
               type="button"
               onClick={() => setSidebarOpen(true)}
-              className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 lg:hidden cursor-pointer"
+              className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 lg:hidden cursor-pointer shrink-0"
               title="Buka Menu"
             >
               <Menu className="w-5 h-5" />
             </button>
 
-            <div>
+            <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
-                <h2 className="text-base font-black text-slate-900">{currentNavItem?.label}</h2>
-                <span className="hidden sm:inline-block px-2 py-0.5 rounded-md bg-blue-100 text-blue-700 text-[10px] font-black uppercase">
+                <h2 className="text-sm sm:text-base font-black text-slate-900 truncate">{currentNavItem?.label}</h2>
+                <span className="hidden sm:inline-block px-2 py-0.5 rounded-md bg-blue-100 text-blue-700 text-[10px] font-black uppercase shrink-0">
                   Siswa
                 </span>
               </div>
-              <p className="text-[11px] text-slate-500">
+              <p className="text-[10px] sm:text-[11px] text-slate-500 truncate">
                 Tahun Ajaran {settings.tahun_ajaran_aktif} • Semester {settings.semester_aktif}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
+            {/* Quick Synchronize Button */}
+            <button
+              type="button"
+              onClick={() => syncAllStudentData(false)}
+              disabled={isSyncing}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-xs font-bold transition-all cursor-pointer shadow-2xs active:scale-95 disabled:opacity-50"
+              title={`Klik untuk memperbarui seluruh data dengan server sekolah. Terakhir sinkron: ${lastSyncTime.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`}
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-blue-600' : 'text-blue-600'}`} />
+              <span className="hidden sm:inline">{isSyncing ? 'Sinkronisasi...' : 'Sinkronkan'}</span>
+            </button>
+
             {/* Live Clock Digital */}
             <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-100 border border-slate-200 font-mono text-xs font-bold text-slate-700">
               <Clock className="w-3.5 h-3.5 text-blue-600" />
@@ -2460,13 +2625,13 @@ export default function MuridDashboard() {
                               className={`px-3 py-1.5 rounded-xl text-xs font-black flex items-center gap-1.5 ${
                                 att.status === 'H'
                                   ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                                  : att.status === 'T'
-                                  ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                                  : att.status === 'S'
+                                  ? 'bg-blue-100 text-blue-800 border border-blue-300'
                                   : 'bg-sky-100 text-sky-800 border border-sky-300'
                               }`}
                             >
                               <CheckCircle2 className="w-3.5 h-3.5" />
-                              <span>{att.status === 'H' ? 'Hadir' : att.status === 'T' ? 'Terlambat' : 'Izin'} ({att.waktu})</span>
+                              <span>{att.status === 'H' ? 'Hadir' : att.status === 'S' ? 'Sakit' : att.status === 'I' ? 'Izin' : 'Alpa'} ({att.waktu})</span>
                             </span>
                           ) : isLive ? (
                             <button
@@ -2800,21 +2965,21 @@ export default function MuridDashboard() {
 
                         <span
                           className={`px-3 py-1 rounded-xl font-black ${
-                            item.status === 'H' || item.status === 'T'
+                            item.status === 'H'
                               ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                              : item.status === 'I'
-                              ? 'bg-sky-100 text-sky-800 border border-sky-300'
                               : item.status === 'S'
                               ? 'bg-indigo-100 text-indigo-800 border border-indigo-300'
+                              : item.status === 'I'
+                              ? 'bg-sky-100 text-sky-800 border border-sky-300'
                               : 'bg-rose-100 text-rose-800 border border-rose-300'
                           }`}
                         >
-                          {item.status === 'H' || item.status === 'T'
+                          {item.status === 'H'
                             ? 'Hadir'
-                            : item.status === 'I'
-                            ? 'Izin'
                             : item.status === 'S'
                             ? 'Sakit'
+                            : item.status === 'I'
+                            ? 'Izin'
                             : 'Alpa'}
                         </span>
                       </div>
@@ -3055,13 +3220,13 @@ export default function MuridDashboard() {
                   </div>
                   <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto pb-1 no-scrollbar sm:flex-wrap">
                     {[
-                      { id: 'all', label: 'Semua Kategori', icon: Trophy, count: achievementsList.length },
-                      { id: 'grade', label: `Misi Jenjang (7, 8, 9)`, icon: School, count: 12 },
-                      { id: 'seasonal', label: `Musim & Semester (${semesterAktif})`, icon: Calendar, count: 6 },
-                      { id: 'streak', label: 'Rekor Streak', icon: Flame, count: 4 },
-                      { id: 'punctuality', label: 'Ketepatan Waktu', icon: Clock, count: 2 },
-                      { id: 'stamina', label: 'Sesi Mapel', icon: Target, count: 2 },
-                      { id: 'leaderboard', label: 'Peringkat Kelas', icon: Award, count: 2 },
+                      { id: 'all', label: 'Semua Kategori', icon: Trophy, count: categoryCounts.all || achievementsList.length },
+                      { id: 'grade', label: `Misi Jenjang (7, 8, 9)`, icon: School, count: categoryCounts.grade || 0 },
+                      { id: 'seasonal', label: `Musim & Semester (${semesterAktif})`, icon: Calendar, count: categoryCounts.seasonal || 0 },
+                      { id: 'streak', label: 'Rekor Streak', icon: Flame, count: categoryCounts.streak || 0 },
+                      { id: 'punctuality', label: 'Kedisiplinan Kelas', icon: Clock, count: categoryCounts.punctuality || 0 },
+                      { id: 'stamina', label: 'Sesi Mapel', icon: Target, count: categoryCounts.stamina || 0 },
+                      { id: 'leaderboard', label: 'Peringkat Kelas', icon: Award, count: categoryCounts.leaderboard || 0 },
                     ].map((cat) => {
                       const Icon = cat.icon;
                       const active = achievementCategoryFilter === cat.id;
@@ -3394,97 +3559,608 @@ export default function MuridDashboard() {
                 </button>
               </div>
 
-              {/* Kartu Lencana Prestasi Kedisiplinan Ringkas */}
-              <div className="glass-card rounded-3xl p-6 shadow-sm border border-slate-200 bg-white space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
-                    <Award className="w-5 h-5 text-amber-500" /> Lencana Prestasi & Kedisiplinan Siswa
-                  </h3>
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('achievements')}
-                    className="text-xs font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1 cursor-pointer"
-                  >
-                    <span>Lihat Seluruh {achievementsList.length} Lencana</span>
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  </button>
-                </div>
+              {/* ========================================================= */}
+              {/* FITUR 3: KARTU "POSISI ANDA" (PERSONAL STANDING CARD)     */}
+              {/* ========================================================= */}
+              {(() => {
+                const getPeriodStreak = (s) => {
+                  const curr = Number(s.streak_sekarang) || 0;
+                  const maxS = Number(s.streak_tertinggi || s.streak_sekarang) || 0;
+                  if (leaderboardPeriod === 'week') return Math.min(5, curr);
+                  if (leaderboardPeriod === 'semester') return maxS;
+                  return curr;
+                };
 
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  {[
-                    { title: 'Langkah Awal', desc: 'Streak 7 hari beruntun', icon: '🔥', unlocked: (siswa?.streak_sekarang || 0) >= 7 },
-                    { title: 'Consistent Master', desc: 'Hadir 14 hari beruntun', icon: '⚡', unlocked: (siswa?.streak_sekarang || 0) >= 14 },
-                    { title: 'Desember Sempurna', desc: 'Kehadiran 100% Desember', icon: '❄️', unlocked: true },
-                    { title: 'Top 3 Kelas', desc: 'Peringkat 3 teratas kelas', icon: '🏆', unlocked: true },
-                  ].map((bdg, i) => (
-                    <div
-                      key={i}
-                      onClick={() => setActiveTab('achievements')}
-                      className={`p-4 rounded-2xl border text-center space-y-1.5 cursor-pointer transition-transform hover:scale-102 ${
-                        bdg.unlocked
-                          ? 'bg-amber-50/60 border-amber-200 text-amber-900'
-                          : 'bg-slate-50 border-slate-200 opacity-50'
-                      }`}
-                    >
-                      <span className="text-3xl block">{bdg.icon}</span>
-                      <h4 className="text-xs font-black">{bdg.title}</h4>
-                      <p className="text-[10px] text-slate-500">{bdg.desc}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
+                // Filter siswa untuk kelas murid yang sedang login secara fleksibel
+                const sClassId = String(siswa?.id_kelas || siswa?.kelas?.id_kelas || '');
+                const sClassName = String(siswa?.kelas?.nama_kelas || '').trim().toUpperCase();
 
-              {/* Leaderboard Kelas */}
-              <div className="glass-card rounded-3xl p-6 shadow-sm border border-slate-200 bg-white space-y-4">
-                <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
-                  <Flame className="w-5 h-5 text-orange-500 fill-orange-500" /> Peringkat Streak Kehadiran Kelas
-                </h3>
+                const classStudents = allStudentsLeaderboard.filter((s) => {
+                  const scId = String(s.id_kelas || s.kelas?.id_kelas || '');
+                  const scName = String(s.kelas?.nama_kelas || '').trim().toUpperCase();
+                  if (sClassId && scId && sClassId === scId) return true;
+                  if (sClassName && scName && sClassName === scName) return true;
+                  return false;
+                });
+                const poolClass = classStudents.length > 0 ? classStudents : (leaderboard.length > 0 ? leaderboard : allStudentsLeaderboard);
+                const rankedClassList = sortAndRankStudentsByStreak(poolClass, getPeriodStreak);
+                const rankedSchoolList = sortAndRankStudentsByStreak(allStudentsLeaderboard, getPeriodStreak);
 
-                <div className="space-y-2.5">
-                  {leaderboard.map((item, idx) => (
-                    <div
-                      key={item.nis}
-                      className={`p-3.5 rounded-2xl border flex items-center justify-between ${
-                        item.nis === siswa?.nis
-                          ? 'bg-blue-50/80 border-blue-300 ring-2 ring-blue-500/20'
-                          : 'bg-slate-50 border-slate-200'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <span
-                          className={`w-7 h-7 rounded-xl text-xs font-black flex items-center justify-center shrink-0 ${
-                            idx === 0
-                              ? 'bg-amber-400 text-white shadow-xs'
-                              : idx === 1
-                              ? 'bg-slate-400 text-white shadow-xs'
-                              : idx === 2
-                              ? 'bg-amber-700 text-white shadow-xs'
-                              : 'bg-slate-200 text-slate-600'
-                          }`}
-                        >
-                          {idx + 1}
-                        </span>
+                const myClassEntry = rankedClassList.find((item) => String(item.nis) === String(siswa?.nis));
+                const classRank = myClassEntry?.rank || 1;
+                const isClassShared = myClassEntry?.isShared;
+
+                const mySchoolEntry = rankedSchoolList.find((item) => String(item.nis) === String(siswa?.nis));
+                const schoolRank = mySchoolEntry?.rank || classRank;
+                const isSchoolShared = mySchoolEntry?.isShared;
+
+                // Selisih hari menuju peringkat di atasnya
+                const studentStreak = getPeriodStreak(siswa || {});
+                let gapText = '';
+                if (classRank === 1) {
+                  gapText = isClassShared
+                    ? `👑 Anda memegang Peringkat #1 Bersama (${myClassEntry?.sharedCount || 2} Siswa)! Pertahankan streak agar tak tergeser!`
+                    : '👑 Puncak Prestasi! Anda memegang Peringkat #1 Teladan Kelas!';
+                } else {
+                  const higherStudents = rankedClassList.filter((s) => s.rank < classRank);
+                  if (higherStudents.length > 0) {
+                    const nextTarget = higherStudents[higherStudents.length - 1];
+                    const targetStreak = getPeriodStreak(nextTarget || {});
+                    const diff = Math.max(1, targetStreak - studentStreak + 1);
+                    gapText = `🔥 Tambah ${diff} hari hadir berturut-turut untuk menyalip ${nextTarget?.nama || 'rekan'} (#${nextTarget?.rank || 1})!`;
+                  } else {
+                    gapText = 'Tingkatkan kehadiran harian Anda untuk menembus Podium Juara!';
+                  }
+                }
+
+                // Kalkulasi info Level dan Total XP Siswa
+                const studentLevelInfo = calculateStudentLevel(
+                  siswa?.xp || totalAchievementXp || (Number(studentStreak) * 50)
+                );
+
+                return (
+                  <div className="rounded-3xl p-6 sm:p-7 bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white shadow-xl border-2 border-amber-400/70 relative overflow-hidden space-y-4">
+                    {/* Background Glow */}
+                    <div className="absolute top-0 right-0 w-80 h-80 bg-amber-400/10 rounded-full blur-3xl pointer-events-none" />
+                    <div className="absolute bottom-0 left-0 w-80 h-80 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
+
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 relative z-10">
+                      <div className="flex items-center gap-4">
+                        <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-amber-400 to-amber-300 text-slate-950 flex items-center justify-center text-2xl font-black shrink-0 shadow-lg ring-4 ring-amber-400/30">
+                          {classRank === 1 ? '🥇' : classRank === 2 ? '🥈' : classRank === 3 ? '🥉' : '🎖️'}
+                        </div>
                         <div>
-                          <span className="text-xs font-black text-slate-900 block">
-                            {item.nama}{' '}
-                            {item.nis === siswa?.nis ? (
-                              <span className="text-[10px] text-blue-700 font-bold">(Anda)</span>
-                            ) : null}
-                          </span>
-                          <span className="text-[10px] text-slate-500 font-medium">
-                            {item.kelas?.nama_kelas || 'Kelas'} • NIS: {item.nis}
-                          </span>
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="px-2.5 py-0.5 rounded-full bg-amber-400 text-slate-950 font-black text-[10px] uppercase tracking-wider shadow-xs">
+                              ⭐ Posisi Anda Saat Ini {isClassShared ? '(Seri)' : ''}
+                            </span>
+                            <span className="text-xs text-slate-400 font-mono">
+                              Kelas {siswa?.kelas?.nama_kelas || 'VII-A'}
+                            </span>
+                          </div>
+                          <h3 className="text-xl sm:text-2xl font-black text-white tracking-tight">
+                            Peringkat #{classRank}{isClassShared ? ' (Bersama)' : ''} di Kelas • #{schoolRank}{isSchoolShared ? ' (Bersama)' : ''} Sekolah
+                          </h3>
+                          <p className="text-xs text-amber-200/90 font-medium mt-0.5">
+                            {gapText}
+                          </p>
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-1.5 text-amber-600 font-black text-sm">
-                        <Flame className="w-4 h-4 fill-amber-500 text-amber-500" />
-                        <span>{item.streak_sekarang || 0} Hari</span>
+                      {/* Stat Pills Siswa */}
+                      <div className="flex items-center gap-3 bg-white/10 backdrop-blur-md p-3 rounded-2xl border border-white/15 self-start md:self-auto shrink-0">
+                        <div className="text-center px-3 border-r border-white/15">
+                          <span className="text-[10px] uppercase font-bold text-slate-300 block">Streak Anda</span>
+                          <span className="text-lg font-black text-amber-400 font-mono flex items-center justify-center gap-1">
+                            <Flame className="w-4 h-4 fill-amber-400" />
+                            <span>{studentStreak} Hari</span>
+                          </span>
+                        </div>
+                        <div className="text-center px-3 border-r border-white/15">
+                          <span className="text-[10px] uppercase font-bold text-slate-300 block">Level</span>
+                          <span className="text-lg font-black text-white font-mono">
+                            Lvl {studentLevelInfo?.level || 1}
+                          </span>
+                        </div>
+                        <div className="text-center px-3">
+                          <span className="text-[10px] uppercase font-bold text-slate-300 block">Total XP</span>
+                          <span className="text-lg font-black text-blue-300 font-mono">
+                            {(studentLevelInfo?.xpTotal || 0).toLocaleString()}
+                          </span>
+                        </div>
                       </div>
                     </div>
-                  ))}
+                  </div>
+                );
+              })()}
+
+              {/* Navigation & Filter Bar: Kategori & Periode */}
+              <div className="p-4 rounded-3xl bg-white border-2 border-slate-200 shadow-xs flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                {/* Category Switcher */}
+                <div className="flex flex-wrap items-center gap-1.5 p-1 bg-slate-100 rounded-2xl border border-slate-200">
+                  {[
+                    { id: 'streak', label: '🔥 Streak Siswa', icon: Flame },
+                    { id: 'kelas', label: '🏆 Kelas Terdisiplin', icon: Trophy },
+                    { id: 'tingkat', label: '📊 Komparasi Angkatan', icon: TrendingUp },
+                  ].map((cat) => {
+                    const Icon = cat.icon;
+                    const active = leaderboardCategory === cat.id;
+                    return (
+                      <button
+                        key={cat.id}
+                        type="button"
+                        onClick={() => setLeaderboardCategory(cat.id)}
+                        className={`px-3.5 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer ${
+                          active
+                            ? 'bg-amber-400 text-slate-950 shadow-xs ring-2 ring-amber-400/30'
+                            : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                        }`}
+                      >
+                        <Icon className={`w-4 h-4 ${active ? 'text-slate-950' : 'text-slate-500'}`} />
+                        <span>{cat.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3 self-start lg:self-auto">
+                  {/* Scope Switcher (Kelas Saya vs Seluruh Sekolah) */}
+                  {leaderboardCategory === 'streak' && (
+                    <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => setLeaderboardScope('class')}
+                        className={`px-3 py-1 rounded-lg font-bold transition-all cursor-pointer ${
+                          leaderboardScope === 'class'
+                            ? 'bg-white text-slate-900 shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        Kelas {siswa?.kelas?.nama_kelas || 'Saya'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setLeaderboardScope('school')}
+                        className={`px-3 py-1 rounded-lg font-bold transition-all cursor-pointer ${
+                          leaderboardScope === 'school'
+                            ? 'bg-white text-slate-900 shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        Seluruh Sekolah
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Filter Periode Waktu */}
+                  <div className="inline-flex bg-slate-100 p-1 rounded-xl text-xs font-bold gap-1 border border-slate-200">
+                    {[
+                      { id: 'week', label: '📅 Pekan Ini' },
+                      { id: 'month', label: '📆 Bulan Ini' },
+                      { id: 'semester', label: '🏛️ Semester' },
+                    ].map((p) => {
+                      const active = leaderboardPeriod === p.id;
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => setLeaderboardPeriod(p.id)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
+                            active
+                              ? 'bg-blue-600 text-white shadow-xs'
+                              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                          }`}
+                        >
+                          {p.label}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
+
+              {/* ========================================================= */}
+              {/* 1. TAMPILAN KATEGORI: STREAK KEHADIRAN SISWA              */}
+              {/* ========================================================= */}
+              {leaderboardCategory === 'streak' && (() => {
+                const getPeriodStreak = (s) => {
+                  const curr = Number(s.streak_sekarang) || 0;
+                  const maxS = Number(s.streak_tertinggi || s.streak_sekarang) || 0;
+                  if (leaderboardPeriod === 'week') return Math.min(5, curr);
+                  if (leaderboardPeriod === 'semester') return maxS;
+                  return curr;
+                };
+
+                const sClassId = String(siswa?.id_kelas || siswa?.kelas?.id_kelas || '');
+                const sClassName = String(siswa?.kelas?.nama_kelas || '').trim().toUpperCase();
+
+                const classFilteredPool = allStudentsLeaderboard.filter((s) => {
+                  const scId = String(s.id_kelas || s.kelas?.id_kelas || '');
+                  const scName = String(s.kelas?.nama_kelas || '').trim().toUpperCase();
+                  if (sClassId && scId && sClassId === scId) return true;
+                  if (sClassName && scName && sClassName === scName) return true;
+                  return false;
+                });
+
+                const pool = leaderboardScope === 'class' && (sClassId || sClassName)
+                  ? (classFilteredPool.length > 0 ? classFilteredPool : (leaderboard.length > 0 ? leaderboard : allStudentsLeaderboard))
+                  : allStudentsLeaderboard;
+
+                const activeList = sortAndRankStudentsByStreak(
+                  pool.length > 0 ? pool : leaderboard,
+                  getPeriodStreak
+                );
+
+                const top1 = activeList[0];
+                const top2 = activeList[1];
+                const top3 = activeList[2];
+
+                // Render kartu podium secara dinamis dan adaptif sesuai peringkat sebenarnya
+                const renderStudentPodiumCard = (st, defaultOrder) => {
+                  if (!st) return null;
+                  const isMe = st.nis === siswa?.nis;
+                  const streakVal = getPeriodStreak(st);
+                  const isRank1 = st.rank === 1;
+                  const isRank2 = st.rank === 2;
+                  const isRank3 = st.rank === 3;
+
+                  let bgClasses = '';
+                  let badgeRank = '';
+                  let crownTitle = '';
+
+                  if (isRank1) {
+                    bgClasses = isMe
+                      ? 'bg-gradient-to-b from-amber-100 to-white border-amber-500 ring-4 ring-amber-400/40 shadow-xl md:-translate-y-3'
+                      : 'bg-gradient-to-b from-amber-50 to-white border-amber-400 ring-4 ring-amber-400/20 shadow-xl md:-translate-y-3';
+                    badgeRank = 'bg-amber-400 text-slate-950 ring-4 ring-amber-300/50';
+                    crownTitle = st.isShared ? '🤝 Juara 1 Bersama' : (isMe ? '🎉 Anda Juara 1!' : 'Teladan Teratas');
+                  } else if (isRank2) {
+                    bgClasses = isMe
+                      ? 'bg-blue-50/80 border-blue-400 ring-4 ring-blue-400/20 shadow-lg'
+                      : 'bg-white border-slate-300 shadow-sm hover:border-slate-400';
+                    badgeRank = 'bg-slate-700 text-white ring-4 ring-slate-200';
+                    crownTitle = st.isShared ? '🤝 Juara 2 Bersama' : 'Juara 2 Teladan';
+                  } else {
+                    bgClasses = isMe
+                      ? 'bg-blue-50/80 border-blue-400 ring-4 ring-blue-400/20 shadow-lg'
+                      : 'bg-white border-amber-700/40 shadow-sm hover:border-amber-700';
+                    badgeRank = 'bg-amber-800 text-white ring-4 ring-amber-100';
+                    crownTitle = st.isShared ? '🤝 Juara 3 Bersama' : 'Juara 3 Teladan';
+                  }
+
+                  return (
+                    <div className={`rounded-3xl p-6 sm:p-7 border-2 sm:border-3 text-center space-y-3.5 transition-all relative ${bgClasses} ${defaultOrder}`}>
+                      <div className="absolute -top-3 left-1/2 -translate-x-1/2 whitespace-nowrap">
+                        <span className={`px-3.5 py-1 rounded-full text-[10px] sm:text-[11px] font-black uppercase tracking-wider inline-flex items-center gap-1 shadow-md ${
+                          isRank1 ? 'bg-amber-400 text-slate-950' : isRank2 ? 'bg-slate-700 text-white' : 'bg-amber-800 text-white'
+                        }`}>
+                          {isRank1 ? <Crown className="w-3.5 h-3.5 fill-current" /> : <Award className="w-3.5 h-3.5" />}
+                          <span>{crownTitle}</span>
+                        </span>
+                      </div>
+
+                      <span className={`w-14 h-14 sm:w-16 sm:h-16 rounded-full font-black text-xl sm:text-2xl mx-auto flex items-center justify-center shadow-lg mt-2 ${badgeRank}`}>
+                        {st.medalEmoji || (isRank1 ? '🥇 1' : isRank2 ? '🥈 2' : '🥉 3')}
+                      </span>
+
+                      <div className="space-y-0.5">
+                        <h4 className="font-black text-base sm:text-lg text-slate-950 truncate">
+                          {st.nama} {isMe ? <span className="text-xs text-blue-700 font-bold">(Anda)</span> : null}
+                        </h4>
+                        <p className="text-xs font-bold text-slate-600">Kelas {st.kelas?.nama_kelas || '-'}</p>
+                      </div>
+
+                      <div className={`inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full font-black text-xs border shadow-2xs ${
+                        isRank1 ? 'bg-amber-100 text-amber-950 border-amber-300' : 'bg-slate-100 text-slate-800 border-slate-300'
+                      }`}>
+                        <Flame className={`w-4 h-4 ${isRank1 ? 'fill-amber-600 text-amber-600' : 'fill-orange-500 text-orange-500'}`} />
+                        <span>{streakVal} Hari Tanpa Alpa</span>
+                      </div>
+                    </div>
+                  );
+                };
+
+                return (
+                  <div className="space-y-6">
+                    {/* Visual 3D Podium Juara 1, 2, 3 */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+                      {/* Slot Kiri (Juara 2 atau Juara 1 Bersama) */}
+                      {top2 && renderStudentPodiumCard(top2, 'order-2 md:order-1')}
+
+                      {/* Slot Tengah (Juara 1 Emas Teratas) */}
+                      {top1 && renderStudentPodiumCard(top1, 'order-1 md:order-2')}
+
+                      {/* Slot Kanan (Juara 3 atau Juara Bersama) */}
+                      {top3 && renderStudentPodiumCard(top3, 'order-3 md:order-3')}
+                    </div>
+
+                    {/* Daftar Klasemen Lengkap */}
+                    <div className="glass-card rounded-3xl p-6 shadow-sm border border-slate-200 bg-white space-y-4">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
+                          <Flame className="w-5 h-5 text-orange-500 fill-orange-500" />
+                          <span>Klasemen Lengkap Streak ({leaderboardScope === 'class' ? `Kelas ${siswa?.kelas?.nama_kelas || 'Saya'}` : 'Seluruh Sekolah'})</span>
+                        </h3>
+                        <span className="text-xs text-slate-500">
+                          Total {activeList.length} Siswa
+                        </span>
+                      </div>
+
+                      <div className="space-y-2.5">
+                        {activeList.map((item) => {
+                          const streakVal = getPeriodStreak(item);
+                          const isMe = item.nis === siswa?.nis;
+
+                          return (
+                            <div
+                              key={item.nis}
+                              className={`p-3.5 rounded-2xl border flex items-center justify-between transition-all ${
+                                isMe
+                                  ? 'bg-blue-50/90 border-blue-400 ring-2 ring-blue-500/20 shadow-xs'
+                                  : 'bg-slate-50/80 border-slate-200 hover:bg-slate-100/70'
+                              }`}
+                            >
+                              <div className="flex items-center gap-3">
+                                <span
+                                  className={`w-8 h-8 rounded-xl text-xs font-black flex items-center justify-center shrink-0 ${
+                                    item.rank === 1
+                                      ? 'bg-amber-400 text-slate-950 font-black shadow-xs ring-2 ring-amber-400/40'
+                                      : item.rank === 2
+                                      ? 'bg-slate-400 text-white shadow-xs'
+                                      : item.rank === 3
+                                      ? 'bg-amber-700 text-white shadow-xs'
+                                      : 'bg-slate-200 text-slate-700'
+                                  }`}
+                                >
+                                  {item.rank}
+                                </span>
+                                <div>
+                                  <span className="text-xs font-black text-slate-900 flex items-center gap-2">
+                                    <span>{item.nama}</span>
+                                    {isMe && (
+                                      <span className="px-2 py-0.5 rounded-md bg-blue-600 text-white text-[10px] font-black uppercase">
+                                        Anda
+                                      </span>
+                                    )}
+                                    {item.isShared && (
+                                      <span className="px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 text-[10px] font-black border border-amber-200">
+                                        = Seri
+                                      </span>
+                                    )}
+                                  </span>
+                                  <span className="text-[10px] text-slate-500 font-medium">
+                                    Kelas {item.kelas?.nama_kelas || '-'} • NIS: {item.nis}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-1.5 text-amber-600 font-black text-sm">
+                                <Flame className="w-4 h-4 fill-amber-500 text-amber-500" />
+                                <span>{streakVal} Hari</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* ========================================================= */}
+              {/* 2. TAMPILAN KATEGORI: KELAS TERDISIPLIN                   */}
+              {/* ========================================================= */}
+              {leaderboardCategory === 'kelas' && (() => {
+                const classLeaderboard = calculateClassDisciplineLeaderboard(
+                  classesList.length > 0 ? classesList : [{ id_kelas: 'c1', nama_kelas: 'VII-A', tingkat: 7 }],
+                  allStudentsLeaderboard,
+                  holidays,
+                  {
+                    tahunAjaran: settings.tahun_ajaran_aktif,
+                    semester: settings.semester_aktif,
+                    attendanceRecords: attendanceHistory,
+                  }
+                );
+
+                const topClass1 = classLeaderboard[0];
+                const topClass2 = classLeaderboard[1];
+                const topClass3 = classLeaderboard[2];
+
+                const renderClassPodiumCard = (cls, defaultOrder) => {
+                  if (!cls) return null;
+                  const isRank1 = cls.rank === 1;
+                  const isRank2 = cls.rank === 2;
+                  const isRank3 = cls.rank === 3;
+                  const isMyClass = String(cls.id_kelas) === String(siswa?.id_kelas) || cls.nama_kelas === siswa?.kelas?.nama_kelas;
+
+                  let bgClass = '';
+                  let badgeRank = '';
+                  let titleBadge = '';
+
+                  if (isRank1) {
+                    bgClass = 'border-3 border-amber-400 bg-gradient-to-b from-amber-50 to-white ring-4 ring-amber-400/20 shadow-xl md:-translate-y-3';
+                    badgeRank = 'bg-amber-400 text-slate-950 ring-4 ring-amber-300/50';
+                    titleBadge = cls.isShared ? '⭐ Juara 1 Bersama' : '⭐ Kelas Paling Disiplin';
+                  } else if (isRank2) {
+                    bgClass = 'border-2 border-slate-300 bg-white ring-4 ring-slate-200/50 shadow-sm';
+                    badgeRank = 'bg-slate-700 text-white ring-4 ring-slate-200';
+                    titleBadge = cls.isShared ? 'Juara 2 Bersama' : 'Juara 2 Disiplin';
+                  } else {
+                    bgClass = 'border-2 border-amber-700/40 bg-white ring-4 ring-amber-700/10 shadow-sm';
+                    badgeRank = 'bg-amber-800 text-white ring-4 ring-amber-100';
+                    titleBadge = cls.isShared ? 'Juara 3 Bersama' : 'Juara 3 Disiplin';
+                  }
+
+                  return (
+                    <div className={`rounded-3xl p-6 sm:p-7 text-center space-y-3 relative transition-all ${bgClass} ${defaultOrder} ${isMyClass ? 'ring-2 ring-blue-500/50' : ''}`}>
+                      <span className={`px-3.5 py-1 rounded-full font-black text-[10px] uppercase tracking-wider inline-block ${
+                        isRank1 ? 'bg-amber-400 text-slate-950' : isRank2 ? 'bg-slate-700 text-white' : 'bg-amber-800 text-white'
+                      }`}>
+                        {titleBadge}
+                      </span>
+                      <span className={`w-14 h-14 sm:w-16 sm:h-16 rounded-full font-black text-xl sm:text-2xl mx-auto flex items-center justify-center shadow-lg ${badgeRank}`}>
+                        {cls.medalEmoji || (isRank1 ? '🥇 1' : isRank2 ? '🥈 2' : '🥉 3')}
+                      </span>
+                      <h4 className="font-black text-lg sm:text-xl text-slate-950">Kelas {cls.nama_kelas}</h4>
+                      <div className={`text-2xl sm:text-3xl font-black font-mono ${isRank1 ? 'text-amber-950' : 'text-slate-800'}`}>
+                        {cls.percentage}%
+                      </div>
+                      <p className="text-xs font-bold text-slate-600">Rerata Streak: {cls.avgActiveStreak} Hari</p>
+                    </div>
+                  );
+                };
+
+                return (
+                  <div className="space-y-6">
+                    {/* Visual Podium Juara Kelas */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+                      {topClass2 && renderClassPodiumCard(topClass2, 'order-2 md:order-1')}
+                      {topClass1 && renderClassPodiumCard(topClass1, 'order-1 md:order-2')}
+                      {topClass3 && renderClassPodiumCard(topClass3, 'order-3 md:order-3')}
+                    </div>
+
+                    {/* Tabel Klasemen Antar Kelas */}
+                    <div className="glass-card rounded-3xl p-6 shadow-sm border border-slate-200 bg-white space-y-4">
+                      <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
+                        <Trophy className="w-5 h-5 text-amber-500" />
+                        Klasemen Persentase Kehadiran Seluruh Kelas
+                      </h3>
+
+                      <div className="space-y-2.5">
+                        {classLeaderboard.map((cls, idx) => {
+                          const isMyClass = String(cls.id_kelas) === String(siswa?.id_kelas) || cls.nama_kelas === siswa?.kelas?.nama_kelas;
+
+                          return (
+                            <div
+                              key={cls.id_kelas || idx}
+                              className={`p-3.5 rounded-2xl border flex items-center justify-between transition-all ${
+                                isMyClass
+                                  ? 'bg-blue-50/90 border-blue-400 ring-2 ring-blue-500/20'
+                                  : 'bg-slate-50 border-slate-200'
+                              }`}
+                            >
+                              <div className="flex items-center gap-3">
+                                <span className={`w-8 h-8 rounded-xl text-xs font-black flex items-center justify-center shrink-0 ${
+                                  cls.rank === 1 ? 'bg-amber-400 text-slate-950 font-black shadow-xs ring-2 ring-amber-400/40' : cls.rank === 2 ? 'bg-slate-400 text-white shadow-xs' : cls.rank === 3 ? 'bg-amber-700 text-white shadow-xs' : 'bg-slate-200 text-slate-700'
+                                }`}>
+                                  {cls.rank}
+                                </span>
+                                <div>
+                                  <span className="text-xs font-black text-slate-900 flex items-center gap-2">
+                                    <span>Kelas {cls.nama_kelas}</span>
+                                    {isMyClass && (
+                                      <span className="px-2 py-0.5 rounded-md bg-blue-600 text-white text-[10px] font-black uppercase">
+                                        Kelas Anda
+                                      </span>
+                                    )}
+                                    {cls.isShared && (
+                                      <span className="px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 text-[10px] font-black border border-amber-200">
+                                        = Seri
+                                      </span>
+                                    )}
+                                  </span>
+                                  <span className="text-[10px] text-slate-500">
+                                    {cls.totalStudents} Siswa • Wali: {cls.guru?.nama || '-'}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="text-right">
+                                <span className="font-mono font-black text-sm text-slate-900 block">{cls.percentage}%</span>
+                                <span className="text-[10px] text-amber-600 font-bold">Rerata: {cls.avgActiveStreak} Hari</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* ========================================================= */}
+              {/* 3. TAMPILAN KATEGORI: KOMPARASI ANGKATAN (7, 8, 9)         */}
+              {/* ========================================================= */}
+              {leaderboardCategory === 'tingkat' && (() => {
+                const gradeComparison = calculateGradeDisciplineComparison(
+                  classesList.length > 0 ? classesList : [{ id_kelas: 'c1', nama_kelas: 'VII-A', tingkat: 7 }],
+                  allStudentsLeaderboard,
+                  holidays,
+                  {
+                    tahunAjaran: settings.tahun_ajaran_aktif,
+                    semester: settings.semester_aktif,
+                    attendanceRecords: attendanceHistory,
+                  }
+                );
+
+                const myGrade = String(siswa?.kelas?.tingkat || (siswa?.kelas?.nama_kelas?.startsWith('IX') ? '9' : siswa?.kelas?.nama_kelas?.startsWith('VIII') ? '8' : '7'));
+
+                return (
+                  <div className="space-y-6">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                      {gradeComparison.map((g, idx) => {
+                        const isMyGrade = String(g.tingkat) === myGrade;
+
+                        return (
+                          <div
+                            key={g.tingkat || idx}
+                            className={`rounded-3xl p-6 border-2 transition-all relative space-y-4 ${
+                              isMyGrade
+                                ? 'bg-gradient-to-b from-blue-50/80 to-white border-blue-400 shadow-lg ring-4 ring-blue-400/20'
+                                : 'bg-white border-slate-200 shadow-sm'
+                            }`}
+                          >
+                            {isMyGrade && (
+                              <div className="absolute -top-3 right-4">
+                                <span className="px-3 py-1 rounded-full bg-blue-600 text-white font-black text-[10px] uppercase tracking-wider inline-flex items-center gap-1 shadow-xs">
+                                  <span>🎯 Angkatan Anda</span>
+                                </span>
+                              </div>
+                            )}
+
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <span className="text-[11px] font-extrabold uppercase text-slate-500 block">
+                                  Peringkat #{g.rank} {g.isShared ? '(Bersama)' : ''}
+                                </span>
+                                <h4 className="font-black text-xl text-slate-900">{g.label}</h4>
+                              </div>
+                              <span className="text-2xl">
+                                {g.rank === 1 ? '🥇' : g.rank === 2 ? '🥈' : '🥉'}
+                              </span>
+                            </div>
+
+                            <div className="space-y-1.5 p-4 rounded-2xl bg-slate-50 border border-slate-200">
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs font-bold text-slate-600">Kehadiran Angkatan</span>
+                                <span className="text-2xl font-black font-mono text-slate-900">{g.percentage}%</span>
+                              </div>
+                              <div className="w-full h-3 bg-slate-200 rounded-full overflow-hidden">
+                                <div
+                                  className={`h-full rounded-full ${isMyGrade ? 'bg-blue-600' : 'bg-slate-700'}`}
+                                  style={{ width: `${g.percentage}%` }}
+                                />
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2 text-center text-xs">
+                              <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200">
+                                <span className="text-[10px] text-slate-500 block font-bold">Total Siswa</span>
+                                <span className="font-black text-slate-800 font-mono">{g.totalStudents}</span>
+                              </div>
+                              <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200">
+                                <span className="text-[10px] text-slate-500 block font-bold">Rerata Streak</span>
+                                <span className="font-black text-orange-600 font-mono">{g.avgStreak} Hari</span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+
             </div>
           )}
 
